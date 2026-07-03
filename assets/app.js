@@ -7,6 +7,8 @@ const state = {
   tasks: [],
   allRows: [],
   previousTasks: [],
+  localExports: [],
+  ignoredCount: 0,
   filters: {
     responsible: '',
     project: '',
@@ -30,6 +32,37 @@ const settings = {
     noDeadline: 0.7
   }
 };
+
+
+const LOCAL_EXPORTS_STORAGE_KEY = 'bitrixTaskDashboard.localExports.v1';
+
+const PROJECT_CONTAINER_TITLES = [
+  'Грозный Музей космоса — техническая реализация',
+  'Музей имени Бахрушина — техническая реализация',
+  'ЦЗН "Печатники" — гарантийное сопровождение',
+  'Дом культур — обслуживание',
+  'Автопоезд 2.0 — обслуживание',
+  'Лужники — техническое сопровождение',
+  'Проекты маркетинга — техническое сопровождение',
+  'Общие офисные и внутренние задачи',
+  'Кресты Музей СПБ - техническая реализация',
+  'ЭКСПО 2027 - техническая реализация',
+  'Нац центр Рязань - техническая реализация',
+  'Музей Тапиау - тех поддержка',
+  'Просчеты ИТО',
+  'Задачи руководителя ИТО',
+  'Пресейл и техническая экспертиза (уровень Технического директора)',
+  'ЦСН - техническая реализация',
+  'Казанский ЦУМ "Навигатор будущего" — техническая реализация'
+];
+
+const IGNORED_DAILY_TASK_TITLES = [
+  'Ежедневная проверка статусов закупок/договоров',
+  'Ежедневный контроль выполнения задач'
+];
+
+const PROJECT_CONTAINER_KEYS = new Set(PROJECT_CONTAINER_TITLES.map(projectKey));
+const IGNORED_DAILY_TASK_KEYS = new Set(IGNORED_DAILY_TASK_TITLES.map(projectKey));
 
 const el = (id) => document.getElementById(id);
 
@@ -71,6 +104,16 @@ function bindUi() {
     await loadExport(state.exportName);
   });
 
+  el('uploadInput').addEventListener('change', async (event) => {
+    await handleUploadFiles(event.target.files);
+    event.target.value = '';
+  });
+
+  el('clearLocalBtn').addEventListener('click', async () => {
+    clearLocalExports();
+    await loadManifest();
+  });
+
   document.querySelectorAll('[data-export]').forEach(button => {
     button.addEventListener('click', () => exportCsv(button.dataset.export));
   });
@@ -78,14 +121,30 @@ function bindUi() {
 
 async function loadManifest() {
   try {
-    const res = await fetch(cacheBust('data/exports.json'));
-    if (!res.ok) throw new Error(`Не найден data/exports.json (${res.status})`);
-    state.manifest = await res.json();
-    const files = [...(state.manifest.files || [])].filter(Boolean);
-    if (!files.length) throw new Error('В data/exports.json нет файлов выгрузок.');
-    files.sort(compareExportNames);
+    loadLocalExports();
+    let repoFiles = [];
 
-    el('exportSelect').innerHTML = files.map(file => `<option value="${escapeAttr(file)}">${escapeHtml(file)}</option>`).join('');
+    try {
+      const res = await fetch(cacheBust('data/exports.json'));
+      if (!res.ok) throw new Error(`Не найден data/exports.json (${res.status})`);
+      state.manifest = await res.json();
+      repoFiles = [...(state.manifest.files || [])].filter(Boolean);
+    } catch (manifestError) {
+      state.manifest = { files: [] };
+      console.warn('Не удалось загрузить manifest:', manifestError);
+    }
+
+    const localFiles = state.localExports.map(item => item.name).filter(Boolean);
+    const files = unique([...repoFiles, ...localFiles]).sort(compareExportNames);
+    if (!files.length) {
+      showError('Нет выгрузок. Добавьте файл через кнопку “Загрузить выгрузку” или положите файл в data/raw/ и data/exports.json.');
+      return;
+    }
+
+    el('exportSelect').innerHTML = files.map(file => {
+      const source = getLocalExport(file) ? ' · с сайта' : '';
+      return `<option value="${escapeAttr(file)}">${escapeHtml(file + source)}</option>`;
+    }).join('');
     const latest = files[files.length - 1];
     el('exportSelect').value = latest;
     await loadExport(latest);
@@ -100,14 +159,15 @@ async function loadExport(fileName) {
     state.exportDate = parseDateFromFileName(fileName) || new Date();
     showStatus(`Загружается выгрузка ${fileName}...`);
 
-    const text = await fetchText(`data/raw/${fileName}`);
+    const text = await fetchExportText(fileName);
     state.tasks = normalizeRows(parseBitrixHtmlExport(text), state.exportDate, fileName);
+    state.ignoredCount = state.tasks.ignoredCount || 0;
     state.allRows = [...state.tasks];
 
     await loadPreviousExport(fileName);
     fillFilters();
     renderAll();
-    showStatus(`Загружено задач: ${state.tasks.length}. Расчетная дата контроля: ${formatDateTime(state.exportDate)}.`);
+    showStatus(`Загружено задач в расчет: ${state.tasks.length}. Исключено: ${state.ignoredCount} (отложенные, проектные контейнеры, ежедневные задачи). Расчетная дата контроля: ${formatDateTime(state.exportDate)}.`);
   } catch (error) {
     showError(error.message);
   }
@@ -115,12 +175,12 @@ async function loadExport(fileName) {
 
 async function loadPreviousExport(currentFile) {
   state.previousTasks = [];
-  const files = [...(state.manifest.files || [])].filter(Boolean).sort(compareExportNames);
+  const files = unique([...(state.manifest.files || []), ...state.localExports.map(item => item.name)]).filter(Boolean).sort(compareExportNames);
   const idx = files.indexOf(currentFile);
   if (idx <= 0) return;
   const previousFile = files[idx - 1];
   try {
-    const text = await fetchText(`data/raw/${previousFile}`);
+    const text = await fetchExportText(previousFile);
     const previousDate = parseDateFromFileName(previousFile) || state.exportDate;
     state.previousTasks = normalizeRows(parseBitrixHtmlExport(text), previousDate, previousFile);
   } catch (error) {
@@ -132,6 +192,73 @@ async function fetchText(url) {
   const res = await fetch(cacheBust(url));
   if (!res.ok) throw new Error(`Не удалось открыть ${url}. Проверь, что файл есть в репозитории и добавлен в data/exports.json.`);
   return await res.text();
+}
+
+async function fetchExportText(fileName) {
+  const local = getLocalExport(fileName);
+  if (local) return local.text;
+  return await fetchText(`data/raw/${fileName}`);
+}
+
+function loadLocalExports() {
+  try {
+    const raw = localStorage.getItem(LOCAL_EXPORTS_STORAGE_KEY);
+    state.localExports = raw ? JSON.parse(raw).filter(item => item && item.name && item.text) : [];
+  } catch (error) {
+    console.warn('Не удалось прочитать локальные выгрузки:', error);
+    state.localExports = [];
+  }
+}
+
+function saveLocalExports() {
+  try {
+    localStorage.setItem(LOCAL_EXPORTS_STORAGE_KEY, JSON.stringify(state.localExports));
+  } catch (error) {
+    showStatus('Выгрузка загружена в текущую сессию, но браузер не смог сохранить ее надолго. Возможно, файл слишком большой.');
+  }
+}
+
+function getLocalExport(fileName) {
+  return state.localExports.find(item => item.name === fileName);
+}
+
+async function handleUploadFiles(fileList) {
+  const files = Array.from(fileList || []).filter(file => /\.(xls|html?|txt)$/i.test(file.name));
+  if (!files.length) {
+    showError('Выберите выгрузку Битрикс24 в формате .xls.');
+    return;
+  }
+
+  for (const file of files) {
+    const text = await readFileAsText(file);
+    const name = normalizeUploadFileName(file.name);
+    state.localExports = state.localExports.filter(item => item.name !== name);
+    state.localExports.push({ name, text, savedAt: new Date().toISOString() });
+  }
+
+  state.localExports.sort((a, b) => compareExportNames(a.name, b.name));
+  state.localExports = state.localExports.slice(-12);
+  saveLocalExports();
+  await loadManifest();
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Не удалось прочитать файл.'));
+    reader.readAsText(file);
+  });
+}
+
+function normalizeUploadFileName(name) {
+  const safe = cleanText(name).replace(/[^0-9A-Za-zА-Яа-яЁё_.\-]/g, '_');
+  return safe || `tasks_${new Date().toISOString().slice(0, 16).replace('T', '_').replace(':', '-')}.xls`;
+}
+
+function clearLocalExports() {
+  state.localExports = [];
+  try { localStorage.removeItem(LOCAL_EXPORTS_STORAGE_KEY); } catch (_) {}
 }
 
 function cacheBust(path) {
@@ -174,8 +301,12 @@ function findHeaderRow(rows) {
 }
 
 function normalizeRows(rows, asOf, exportFile) {
-  return rows.map((row, index) => normalizeTask(row, index, asOf, exportFile))
+  const normalized = rows
+    .map((row, index) => normalizeTask(row, index, asOf, exportFile))
     .filter(task => task.title || task.id);
+  const included = normalized.filter(task => !task.ignoreForDashboard);
+  included.ignoredCount = normalized.length - included.length;
+  return included;
 }
 
 function normalizeTask(row, index, asOf, exportFile) {
@@ -211,6 +342,9 @@ function normalizeTask(row, index, asOf, exportFile) {
   const isWaitingControl = /контрол/.test(normalizedStatus);
   const isInProgress = /выполня|работ|идет|идёт/.test(normalizedStatus);
   const isDeferred = /отлож/.test(normalizedStatus);
+  const isProjectContainer = PROJECT_CONTAINER_KEYS.has(projectKey(title));
+  const isIgnoredDaily = IGNORED_DAILY_TASK_KEYS.has(projectKey(title));
+  const ignoreForDashboard = isDeferred || isProjectContainer || isIgnoredDaily;
   const noDeadline = !deadline;
   const overdue = !isCompleted && deadline && deadline.getTime() < asOf.getTime();
   const deadlineDeltaDays = deadline ? diffDays(deadline, asOf) : null;
@@ -227,7 +361,7 @@ function normalizeTask(row, index, asOf, exportFile) {
     id, title, status, responsible, author, creator, parentTitle, parentId, project,
     deadline, created, changed, closed, priority, estimate, spent, planned,
     exportFile, exportDate: asOf,
-    isCompleted, isWaitingControl, isInProgress, isDeferred,
+    isCompleted, isWaitingControl, isInProgress, isDeferred, isProjectContainer, isIgnoredDaily, ignoreForDashboard,
     noDeadline, overdue, overdueDays, dueToday, dueSoon, deadlineDeltaDays,
     lastActivity, staleDays, stale7, stale14, noParent
   };
@@ -250,7 +384,6 @@ function calculateRisk(task) {
   if (task.noDeadline) score += 15;
   if (task.stale7) score += 10;
   if (task.stale14) score += 20;
-  if (task.isDeferred && task.overdue) score += 15;
   if (task.noParent) score += 10;
   score = Math.min(100, Math.round(score));
 
@@ -262,7 +395,6 @@ function calculateRisk(task) {
 }
 
 function recommendAction(task) {
-  if (task.isDeferred && task.overdue) return 'Принять решение: закрыть, снять, возобновить или перепланировать';
   if (task.overdue) return 'Запросить результат, блокер или новый срок';
   if (task.isWaitingControl) return 'Проверить результат и закрыть или вернуть на доработку';
   if (task.noDeadline) return 'Назначить крайний срок';
@@ -501,7 +633,6 @@ function renderHygiene(tasks) {
     ['Нет срока', count(tasks, t => t.noDeadline), 'Назначить дедлайн', 'gray'],
     ['Нет родителя', count(tasks, t => t.noParent), 'Привязать к проекту', 'gray'],
     ['Нет активности >14', count(tasks, t => t.stale14), 'Запросить статус', 'orange'],
-    ['Отложена + просрочена', count(tasks, t => t.isDeferred && t.overdue), 'Принять решение', 'red'],
     ['Ждёт контроля', count(tasks, t => t.isWaitingControl), 'Разобрать inbox', 'blue'],
     ['Нет оценки', count(tasks, t => !t.estimate), 'Нет данных по трудозатратам', 'gray']
   ];
@@ -522,7 +653,6 @@ function buildHygieneIssues(tasks) {
     if (t.noDeadline) issues.push(issueRow(t, 'Нет срока', 'gray', 'Назначить крайний срок'));
     if (t.noParent) issues.push(issueRow(t, 'Нет родителя', 'gray', 'Привязать к проекту / родительской задаче'));
     if (t.stale14) issues.push(issueRow(t, 'Нет активности >14 дн.', 'orange', 'Запросить актуальный статус'));
-    if (t.isDeferred && t.overdue) issues.push(issueRow(t, 'Отложена + просрочена', 'red', 'Закрыть, снять, возобновить или перепланировать'));
     if (t.isWaitingControl) issues.push(issueRow(t, 'Ждёт контроля', 'blue', 'Принять или вернуть'));
     if (!t.estimate) issues.push(issueRow(t, 'Нет оценки', 'gray', 'Оценить трудозатраты, если это проектная задача'));
   });
@@ -672,6 +802,17 @@ function downloadCsv(rows, fileName) {
 function csvEscape(value) {
   const str = String(value ?? '');
   return `"${str.replace(/"/g, '""')}"`;
+}
+
+function projectKey(value) {
+  return cleanText(value)
+    .toLowerCase()
+    .replace(/[ё]/g, 'е')
+    .replace(/[«»„“”]/g, '"')
+    .replace(/[–—−]/g, '-')
+    .replace(/\s*-\s*/g, ' - ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function cleanText(value) {
