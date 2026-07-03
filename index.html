@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Контроль задач ИТО</title>
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <div class="eyebrow">Bitrix Task Control</div>
+      <h1>Контроль задач ИТО</h1>
+      <p>Пуш-лист, загрузка людей, риски проектов и гигиена задач из выгрузок Битрикс24.</p>
+    </div>
+    <div class="header-actions">
+      <label class="select-label">Выгрузка
+        <select id="exportSelect"></select>
+      </label>
+      <button id="reloadBtn" class="button button-secondary">Обновить</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="statusBox" class="status-box">Загрузка данных...</section>
+
+    <section class="filters card">
+      <div class="filter-grid">
+        <label>Ответственный
+          <select id="filterResponsible"><option value="">Все</option></select>
+        </label>
+        <label>Проект
+          <select id="filterProject"><option value="">Все</option></select>
+        </label>
+        <label>Статус
+          <select id="filterStatus"><option value="">Все</option></select>
+        </label>
+        <label>Риск
+          <select id="filterRisk">
+            <option value="">Все</option>
+            <option value="red">Красный</option>
+            <option value="orange">Оранжевый</option>
+            <option value="yellow">Желтый</option>
+            <option value="gray">Серый</option>
+            <option value="green">Зеленый</option>
+          </select>
+        </label>
+        <label>Поиск
+          <input id="searchBox" placeholder="Задача, проект, сотрудник..." />
+        </label>
+      </div>
+    </section>
+
+    <nav class="tabs" aria-label="Разделы дашборда">
+      <button class="tab active" data-tab="today">Контроль сегодня</button>
+      <button class="tab" data-tab="people">Загрузка людей</button>
+      <button class="tab" data-tab="projects">Проекты</button>
+      <button class="tab" data-tab="control">Ждёт контроля</button>
+      <button class="tab" data-tab="hygiene">Гигиена</button>
+      <button class="tab" data-tab="dynamic">Динамика</button>
+      <button class="tab" data-tab="all">Все задачи</button>
+      <button class="tab" data-tab="help">Как обновлять</button>
+    </nav>
+
+    <section id="tab-today" class="tab-panel active">
+      <div id="kpiCards" class="kpi-grid"></div>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-head">
+            <h2>Кого пушить сегодня</h2>
+            <button class="button" data-export="push">Скачать CSV</button>
+          </div>
+          <div id="pushList" class="table-wrap"></div>
+        </div>
+        <div class="card">
+          <h2>Кто доступен для новых задач</h2>
+          <div id="availablePeople" class="table-wrap"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-people" class="tab-panel">
+      <div class="card">
+        <div class="card-head">
+          <h2>Загрузка, надежность и доступность людей</h2>
+          <button class="button" data-export="people">Скачать CSV</button>
+        </div>
+        <div id="peopleSummary" class="summary-row"></div>
+        <div id="peopleBars" class="bars"></div>
+        <div id="peopleTable" class="table-wrap"></div>
+      </div>
+    </section>
+
+    <section id="tab-projects" class="tab-panel">
+      <div class="card">
+        <div class="card-head">
+          <h2>Риски по проектам и родительским задачам</h2>
+          <button class="button" data-export="projects">Скачать CSV</button>
+        </div>
+        <div id="projectBars" class="bars"></div>
+        <div id="projectTable" class="table-wrap"></div>
+      </div>
+    </section>
+
+    <section id="tab-control" class="tab-panel">
+      <div class="card">
+        <h2>Задачи в статусе “Ждёт контроля”</h2>
+        <p class="muted">Это отдельный управленческий inbox: принять, закрыть, вернуть или запросить уточнение.</p>
+        <div id="controlTable" class="table-wrap"></div>
+      </div>
+    </section>
+
+    <section id="tab-hygiene" class="tab-panel">
+      <div class="card">
+        <div class="card-head">
+          <h2>Гигиена задач</h2>
+          <button class="button" data-export="hygiene">Скачать CSV</button>
+        </div>
+        <div id="hygieneCards" class="kpi-grid"></div>
+        <div id="hygieneTable" class="table-wrap"></div>
+      </div>
+    </section>
+
+    <section id="tab-dynamic" class="tab-panel">
+      <div class="card">
+        <h2>Динамика между выгрузками</h2>
+        <div id="dynamicContent"></div>
+      </div>
+    </section>
+
+    <section id="tab-all" class="tab-panel">
+      <div class="card">
+        <div class="card-head">
+          <h2>Все задачи</h2>
+          <button class="button" data-export="all">Скачать CSV</button>
+        </div>
+        <div id="allTasksTable" class="table-wrap"></div>
+      </div>
+    </section>
+
+    <section id="tab-help" class="tab-panel">
+      <div class="card help">
+        <h2>Как обновлять дашборд</h2>
+        <ol>
+          <li>В Битрикс24 открой список задач отдела.</li>
+          <li>Сделай экспорт задач в файл <code>.xls</code>.</li>
+          <li>Переименуй файл по шаблону <code>tasks_YYYY-MM-DD_HH-MM.xls</code>.</li>
+          <li>Положи файл в папку <code>data/raw/</code>.</li>
+          <li>Открой файл <code>data/exports.json</code> и добавь имя новой выгрузки в список <code>files</code>.</li>
+          <li>Залей изменения через GitHub Desktop: <b>Commit to main</b> → <b>Push origin</b>.</li>
+          <li>Открой ссылку GitHub Pages и нажми <b>Обновить</b>.</li>
+        </ol>
+        <h3>Как часто делать выгрузки</h3>
+        <p><b>Обычный режим:</b> 1 раз в рабочий день утром до 09:30.</p>
+        <p><b>Активная проектная фаза:</b> 2 раза в день — утром и после обеда.</p>
+        <p><b>Перед сдачей проекта:</b> 3 раза в день — утром, в середине дня и в конце рабочего дня.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>Статический дашборд. Работает на GitHub Pages без Streamlit, Python и серверной части.</span>
+  </footer>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>

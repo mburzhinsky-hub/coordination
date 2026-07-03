@@ -1,23 +1,2 @@
-# Python
-__pycache__/
-*.py[cod]
-.venv/
-venv/
-.env
-.env.*
-
-# OS / IDE
 .DS_Store
-.idea/
-.vscode/
-
-# Generated reports and cache
-data/processed/*
-!data/processed/.gitkeep
-reports/*.csv
-reports/*.xlsx
-
-# Security note:
-# If the repository is public, uncomment the next two lines before committing real Bitrix exports.
-# data/raw/*
-# !data/raw/.gitkeep
+Thumbs.db
