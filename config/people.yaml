@@ -1,6 +1,0 @@
-# Optional manual overrides for employees.
-# Example:
-# "Иван Иванов":
-#   role: "Инженер"
-#   capacity: 1.0
-#   note: "Можно нагружать проектными задачами"
