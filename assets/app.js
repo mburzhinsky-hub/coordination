@@ -165,6 +165,15 @@ function bindUi() {
   const downloadDigestTxtBtn = el('downloadDigestTxtBtn');
   if (downloadDigestTxtBtn) downloadDigestTxtBtn.addEventListener('click', downloadCurrentDigestTxt);
 
+  const openDigestMiniReportBtn = el('openDigestMiniReportBtn');
+  if (openDigestMiniReportBtn) openDigestMiniReportBtn.addEventListener('click', () => openCurrentDigestMiniReport());
+
+  const printDigestMiniReportBtn = el('printDigestMiniReportBtn');
+  if (printDigestMiniReportBtn) printDigestMiniReportBtn.addEventListener('click', () => openCurrentDigestMiniReport(true));
+
+  const downloadDigestMiniReportHtmlBtn = el('downloadDigestMiniReportHtmlBtn');
+  if (downloadDigestMiniReportHtmlBtn) downloadDigestMiniReportHtmlBtn.addEventListener('click', downloadCurrentDigestMiniReportHtml);
+
   document.addEventListener('click', event => {
     const copyTaskButton = event.target.closest('[data-copy-digest-task]');
     if (copyTaskButton) {
@@ -1108,13 +1117,28 @@ function fillDigestPeople() {
   select.value = state.digest.person;
 }
 
+
+function getCurrentDigestContext() {
+  const entries = buildDigestRoleEntries(state.tasks || []);
+  const index = buildDigestIndexFromEntries(entries);
+  const people = index.map(row => row.person);
+  if (people.length && (!state.digest.person || !people.includes(state.digest.person))) {
+    state.digest.person = people[0];
+  }
+  const rawPersonItems = entries.filter(item => item.person === state.digest.person);
+  const personItems = applyDigestFilters(rawPersonItems);
+  const selectedIndex = index.find(row => row.person === state.digest.person) || index[0] || {
+    person: state.digest.person || '', total: 0, red: 0, today: 0, soon: 0, hygiene: 0, changes: 0, rolesLabel: '', roleCount: 0
+  };
+  return { entries, index, people, rawPersonItems, personItems, selectedIndex };
+}
+
 function renderDigests() {
   const content = el('digestContent');
   if (!content) return;
 
-  const entries = buildDigestRoleEntries(state.tasks || []);
-  const index = buildDigestIndexFromEntries(entries);
   const summary = el('digestSummary');
+  const { index, people, rawPersonItems, personItems, selectedIndex } = getCurrentDigestContext();
 
   if (!index.length) {
     if (summary) summary.innerHTML = '<span class="summary-pill">Нет задач для ежедневных дайджестов</span>';
@@ -1122,7 +1146,6 @@ function renderDigests() {
     return;
   }
 
-  const people = index.map(row => row.person);
   if (!state.digest.person || !people.includes(state.digest.person)) state.digest.person = people[0];
 
   const personSelect = el('digestPersonSelect');
@@ -1131,12 +1154,10 @@ function renderDigests() {
   const formatSelect = el('digestFormatFilter');
   if (formatSelect && formatSelect.value !== state.digest.format) formatSelect.value = state.digest.format;
 
-  const rawPersonItems = entries.filter(item => item.person === state.digest.person);
-  const personItems = applyDigestFilters(rawPersonItems);
-  const selectedIndex = index.find(row => row.person === state.digest.person) || index[0];
   const scopeLabel = getDigestScopeLabel(state.digest.scope);
   const formatLabel = getDigestFormatLabel(state.digest.format);
   const digestText = buildDigestText(state.digest.person, personItems, scopeLabel, state.digest.format);
+  const miniReportPreview = renderDigestMiniReportPreview(state.digest.person, rawPersonItems, personItems, selectedIndex);
 
   if (summary) {
     summary.innerHTML = [
@@ -1175,10 +1196,17 @@ function renderDigests() {
       <div class="report-panel digest-forward-panel">
         <div class="panel-title-row">
           <div>
-            <h3>Сообщение для пересылки</h3>
-            <p class="muted">Можно скопировать короткий текст, подробный текст, отдельную задачу или скачать TXT.</p>
+            <h3>Мини-отчет для пересылки</h3>
+            <p class="muted">Визуальный мини-отчет можно открыть в отдельном окне, отправить через Печать / PDF или скачать как HTML.</p>
           </div>
         </div>
+        <div class="digest-report-actions">
+          <button class="button button-mini" id="openDigestMiniReportInlineBtn" type="button">Открыть</button>
+          <button class="button button-mini button-light" id="printDigestMiniReportInlineBtn" type="button">Печать / PDF</button>
+          <button class="button button-mini button-light" id="downloadDigestMiniReportInlineBtn" type="button">Скачать HTML</button>
+        </div>
+        <div class="digest-report-card">${miniReportPreview}</div>
+        <h3>Текст для мессенджера</h3>
         <div class="digest-forward-actions">
           <button class="button button-mini" id="copyDigestInlineBtn" type="button">Скопировать текущий формат</button>
           <button class="button button-mini button-light" id="copyDigestBriefInlineBtn" type="button">Кратко</button>
@@ -1201,6 +1229,12 @@ function renderDigests() {
   if (inlineBrief) inlineBrief.addEventListener('click', () => copyCurrentDigest('brief'));
   const inlineFull = el('copyDigestFullInlineBtn');
   if (inlineFull) inlineFull.addEventListener('click', () => copyCurrentDigest('full'));
+  const openInline = el('openDigestMiniReportInlineBtn');
+  if (openInline) openInline.addEventListener('click', () => openCurrentDigestMiniReport());
+  const printInline = el('printDigestMiniReportInlineBtn');
+  if (printInline) printInline.addEventListener('click', () => openCurrentDigestMiniReport(true));
+  const downloadInline = el('downloadDigestMiniReportInlineBtn');
+  if (downloadInline) downloadInline.addEventListener('click', downloadCurrentDigestMiniReportHtml);
 }
 
 function renderDigestPersonKpis(selectedIndex, rawItems, filteredItems) {
@@ -1319,6 +1353,336 @@ function renderDigestRoleSections(items) {
       </div>
     `;
   }).join('');
+}
+
+function renderDigestMiniReportPreview(person, rawItems, filteredItems, selectedIndex) {
+  const model = buildDigestMiniReportModel(person, rawItems, filteredItems, selectedIndex);
+  return renderDigestMiniReportMarkup(model);
+}
+
+function buildDigestMiniReportModel(person, rawItems, filteredItems, selectedIndex) {
+  const scopeLabel = getDigestScopeLabel(state.digest.scope);
+  const roleLabel = state.digest.role ? (ROLE_META[state.digest.role]?.label || state.digest.role) : 'Все роли';
+  const projects = unique(filteredItems.map(item => item.task.project || 'Без проекта'));
+  const roleGroups = groupBy(filteredItems, item => item.roleLabel);
+  const roleSummary = Object.entries(roleGroups).map(([role, rows]) => `${role}: ${rows.length}`).join(' · ') || 'Нет активных ролей';
+  const overdueCount = count(filteredItems, item => item.task.overdue);
+  const todayCount = count(filteredItems, item => item.task.dueToday || item.task.isWaitingControl);
+  const waitingControlCount = count(filteredItems, item => item.task.isWaitingControl);
+  const noDeadlineCount = count(filteredItems, item => item.task.noDeadline);
+  const highRiskCount = count(filteredItems, item => item.task.riskScore >= settings.digest.highRiskScore);
+  const staleCount = count(filteredItems, item => item.task.staleDays !== null && item.task.staleDays > settings.digest.staleDays);
+  const summaryStats = [
+    { label: 'Фокус отчета', value: scopeLabel, hint: roleLabel },
+    { label: 'Проектов', value: String(projects.length), hint: projects.slice(0, 3).join(', ') || 'Нет проектов' },
+    { label: 'Роли', value: String(selectedIndex.roleCount || Object.keys(roleGroups).length || 0), hint: roleSummary },
+    { label: 'Ждет контроля', value: String(waitingControlCount), hint: waitingControlCount ? 'Нужна реакция постановщика / исполнителя' : 'Нет зависаний на контроле' },
+    { label: 'Без срока', value: String(noDeadlineCount), hint: noDeadlineCount ? 'Назначить крайний срок' : 'Гигиена в норме' },
+    { label: 'Высокий риск', value: String(highRiskCount), hint: highRiskCount ? 'Нужны приоритет и эскалация' : 'Критичного риска нет' }
+  ];
+
+  const insights = [];
+  if (selectedIndex.red) insights.push({ color: 'red', text: `В красной зоне ${selectedIndex.red} пунктов. Их лучше отправлять в первую очередь.` });
+  if (todayCount) insights.push({ color: 'orange', text: `Есть ${todayCount} пунктов на сегодня или на немедленную реакцию.` });
+  if (waitingControlCount) insights.push({ color: 'blue', text: `Задач в статусе “Ждёт контроля”: ${waitingControlCount}. Есть риск зависания без решения.` });
+  if (noDeadlineCount) insights.push({ color: 'gray', text: `Пунктов без срока: ${noDeadlineCount}. Их стоит датировать, иначе задача плохо управляется.` });
+  if (staleCount) insights.push({ color: 'yellow', text: `Есть ${staleCount} задач без активности более ${settings.digest.staleDays} дней.` });
+  if (!insights.length) insights.push({ color: 'green', text: 'По выбранному фильтру критичных проблем нет. Можно использовать отчет как подтверждение стабильной ситуации.' });
+
+  const sections = Object.keys(DIGEST_CATEGORY_META)
+    .filter(category => filteredItems.some(item => item.category === category))
+    .map(category => {
+      const meta = DIGEST_CATEGORY_META[category];
+      const items = filteredItems.filter(item => item.category === category).sort(compareDigestItems);
+      return {
+        key: category,
+        title: meta.label,
+        color: meta.color,
+        count: items.length,
+        items,
+        limit: category === 'red' || category === 'today' ? 5 : 4
+      };
+    });
+
+  return {
+    person,
+    dateText: formatDate(state.exportDate || new Date()),
+    exportName: state.exportName || '',
+    scopeLabel,
+    roleLabel,
+    projects,
+    roleSummary,
+    selectedIndex,
+    filteredTotal: filteredItems.length,
+    urgentCount: (selectedIndex.red || 0) + (selectedIndex.today || 0),
+    summaryStats,
+    insights,
+    sections,
+    counts: {
+      overdue: overdueCount,
+      today: todayCount,
+      noDeadline: noDeadlineCount,
+      waitingControl: waitingControlCount,
+      highRisk: highRiskCount,
+      stale: staleCount
+    }
+  };
+}
+
+function renderDigestMiniReportMarkup(model) {
+  const kpis = [
+    { label: 'Красная зона', value: model.selectedIndex.red, hint: 'Пишем в первую очередь', color: model.selectedIndex.red ? 'red' : 'green' },
+    { label: 'Сегодня / реакция', value: model.selectedIndex.today, hint: 'Дедлайны и контроль', color: model.selectedIndex.today ? 'orange' : 'green' },
+    { label: 'В отчете', value: model.filteredTotal, hint: model.scopeLabel, color: model.filteredTotal ? 'blue' : 'green' },
+    { label: 'Проекты', value: model.projects.length, hint: model.projects.slice(0, 2).join(', ') || 'Нет проектов', color: 'gray' },
+    { label: 'Высокий риск', value: model.counts.highRisk, hint: model.counts.highRisk ? 'Нужен приоритет' : 'Критичного риска нет', color: model.counts.highRisk ? 'red' : 'green' }
+  ];
+
+  return `
+    <section class="mini-report-sheet">
+      <div class="mini-report-topbar">
+        <div class="mini-report-brand">
+          <span class="eyebrow">Ежедневный мини-отчет</span>
+          <strong>Контроль задач ИТО</strong>
+        </div>
+        <div class="mini-report-context">
+          <div class="eyebrow">Выгрузка</div>
+          <div>${escapeHtml(model.exportName || 'локальная выгрузка')}</div>
+        </div>
+      </div>
+      <div class="mini-report-body">
+        <div class="mini-report-header">
+          <div>
+            <div class="eyebrow">Персональный отчет</div>
+            <h3>${escapeHtml(model.person)}</h3>
+            <p>Дата: <b>${escapeHtml(model.dateText)}</b> · Фокус: <b>${escapeHtml(model.scopeLabel)}</b> · Роли: <b>${escapeHtml(model.roleLabel)}</b></p>
+            <p>${escapeHtml(model.roleSummary || 'Роли не определены')}</p>
+          </div>
+          <div class="mini-report-score">
+            <strong>${escapeHtml(String(model.urgentCount))}</strong>
+            <span>критично / сегодня</span>
+          </div>
+        </div>
+
+        <div class="mini-report-kpis">
+          ${kpis.map(kpi => `
+            <div class="mini-report-kpi ${escapeAttr(kpi.color)}">
+              <div class="label">${escapeHtml(kpi.label)}</div>
+              <div class="value">${escapeHtml(String(kpi.value))}</div>
+              <div class="hint">${escapeHtml(kpi.hint)}</div>
+            </div>
+          `).join('')}
+        </div>
+
+        <div class="mini-report-grid">
+          <div class="mini-report-panel">
+            <h4>Ключевые выводы</h4>
+            <ul class="mini-report-insights">
+              ${model.insights.map(item => `<li class="${escapeAttr(item.color)}">${escapeHtml(item.text)}</li>`).join('')}
+            </ul>
+          </div>
+          <div class="mini-report-panel">
+            <h4>Сводка по состоянию</h4>
+            <div class="mini-report-stats">
+              ${model.summaryStats.map(stat => `
+                <div class="mini-report-stat">
+                  <div>
+                    <span>${escapeHtml(stat.label)}</span>
+                    <div class="small">${escapeHtml(stat.hint)}</div>
+                  </div>
+                  <b>${escapeHtml(stat.value)}</b>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+
+        <div class="mini-report-sections">
+          ${model.sections.map(section => renderMiniReportSection(section)).join('')}
+        </div>
+
+        <div class="mini-report-footer">
+          <b>Как использовать:</b> откройте отчет в отдельном окне, отправьте его как HTML-вложение или выберите <b>Печать / PDF</b> и сохраните как PDF-файл для пересылки.<br>
+          Источник данных: выгрузка Битрикс24, обработанная статическим дашбордом ИТО.
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderMiniReportSection(section) {
+  const visibleItems = section.items.slice(0, section.limit);
+  const hiddenCount = Math.max(0, section.items.length - visibleItems.length);
+  return `
+    <section class="mini-report-section">
+      <div class="mini-report-section-head">
+        <h4>${badge(section.title, section.color)}</h4>
+        <span class="small">${section.count} пунктов</span>
+      </div>
+      <div class="mini-report-item-list">
+        ${visibleItems.map(item => renderMiniReportItem(item)).join('')}
+      </div>
+      ${hiddenCount ? `<div class="mini-report-more">Ещё ${hiddenCount} пунктов доступны в полном дашборде.</div>` : ''}
+    </section>
+  `;
+}
+
+function renderMiniReportItem(item) {
+  const task = item.task;
+  const deadline = task.deadline ? formatDateTime(task.deadline) : 'срок не указан';
+  const activity = task.lastActivity ? formatDateTime(task.lastActivity) : 'нет данных';
+  const meta = [task.project || 'Без проекта', `Статус: ${task.status || 'не указан'}`, `Срок: ${deadline}`].join(' · ');
+  return `
+    <article class="mini-report-item ${escapeAttr(item.color)}">
+      <div class="mini-report-item-top">
+        <div>
+          <div class="mini-report-item-title">[${escapeHtml(task.id)}] ${escapeHtml(task.title)}</div>
+          <div class="mini-report-item-meta">${escapeHtml(meta)}</div>
+        </div>
+        <div>${badge(item.roleLabel, ROLE_META[item.role]?.color || 'gray')}</div>
+      </div>
+      <div class="mini-report-item-reason"><b>Почему в отчете:</b> ${escapeHtml(item.flags.join('; ') || 'требует внимания')}</div>
+      <div class="mini-report-item-action"><b>Что сделать:</b> ${escapeHtml(item.action)} · Последняя активность: ${escapeHtml(activity)}</div>
+    </article>
+  `;
+}
+
+function buildCurrentDigestMiniReportDocumentHtml() {
+  const { index, rawPersonItems, personItems, selectedIndex } = getCurrentDigestContext();
+  if (!index.length) return '';
+  const model = buildDigestMiniReportModel(state.digest.person || selectedIndex.person || 'Сотрудник', rawPersonItems, personItems, selectedIndex);
+  const reportMarkup = renderDigestMiniReportMarkup(model);
+  return `<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Мини-отчет — ${escapeHtml(model.person)}</title>
+  <style>${getStandaloneDigestReportStyles()}</style>
+</head>
+<body>
+  ${reportMarkup}
+</body>
+</html>`;
+}
+
+function getStandaloneDigestReportStyles() {
+  return `
+    :root {
+      --bg: #eef3fb;
+      --card: #ffffff;
+      --text: #162033;
+      --muted: #64748b;
+      --line: #dde5f0;
+      --blue: #1d4ed8;
+      --red: #dc2626;
+      --orange: #ea580c;
+      --yellow: #ca8a04;
+      --green: #16a34a;
+      --gray: #64748b;
+      --shadow: 0 16px 40px rgba(15, 23, 42, .10);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; background: var(--bg); color: var(--text); font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
+    .badge { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 5px 9px; font-size: 12px; font-weight: 900; white-space: nowrap; }
+    .badge.red { background: #fee2e2; color: #991b1b; }
+    .badge.orange { background: #ffedd5; color: #9a3412; }
+    .badge.yellow { background: #fef3c7; color: #92400e; }
+    .badge.green { background: #dcfce7; color: #166534; }
+    .badge.gray { background: #e2e8f0; color: #334155; }
+    .badge.blue { background: #dbeafe; color: #1e40af; }
+    .small { font-size: 12px; color: var(--muted); }
+    .eyebrow { text-transform: uppercase; letter-spacing: .08em; font-size: 11px; font-weight: 900; opacity: .82; }
+    ${cleanText(`
+      .mini-report-sheet { max-width: 960px; margin: 0 auto; border: 1px solid #dbe4f2; border-radius: 22px; background: #ffffff; overflow: hidden; box-shadow: var(--shadow); }
+      .mini-report-topbar { display: flex; justify-content: space-between; gap: 16px; align-items: center; padding: 14px 18px; background: linear-gradient(135deg, #0f172a, #1d4ed8); color: #fff; }
+      .mini-report-brand { display: grid; gap: 4px; }
+      .mini-report-context { text-align: right; font-size: 12px; opacity: .9; }
+      .mini-report-body { padding: 18px; }
+      .mini-report-header { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; margin-bottom: 16px; }
+      .mini-report-header h3 { font-size: 24px; margin: 6px 0 8px; }
+      .mini-report-header p { margin: 0 0 6px; color: var(--muted); line-height: 1.5; }
+      .mini-report-score { min-width: 170px; text-align: center; border-radius: 20px; background: #eff6ff; border: 1px solid #bfdbfe; padding: 14px 12px; }
+      .mini-report-score strong { display: block; font-size: 34px; line-height: 1; color: var(--blue); }
+      .mini-report-score span { display: block; margin-top: 6px; font-size: 12px; font-weight: 800; color: #334155; }
+      .mini-report-kpis { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 10px; margin-bottom: 16px; }
+      .mini-report-kpi { border: 1px solid var(--line); border-top: 4px solid var(--blue); border-radius: 16px; padding: 12px; background: #fff; min-height: 94px; }
+      .mini-report-kpi.red { border-top-color: var(--red); } .mini-report-kpi.orange { border-top-color: var(--orange); } .mini-report-kpi.yellow { border-top-color: var(--yellow); } .mini-report-kpi.green { border-top-color: var(--green); } .mini-report-kpi.gray { border-top-color: var(--gray); } .mini-report-kpi.blue { border-top-color: var(--blue); }
+      .mini-report-kpi .label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 900; }
+      .mini-report-kpi .value { margin-top: 8px; font-size: 28px; font-weight: 950; }
+      .mini-report-kpi .hint { margin-top: 6px; font-size: 12px; color: #334155; }
+      .mini-report-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr); gap: 14px; margin-bottom: 14px; }
+      .mini-report-panel { border: 1px solid var(--line); border-radius: 18px; background: #fbfdff; padding: 14px; }
+      .mini-report-panel h4 { margin: 0 0 10px; font-size: 15px; }
+      .mini-report-insights { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+      .mini-report-insights li { border: 1px solid var(--line); border-left: 5px solid var(--gray); border-radius: 14px; background: #fff; padding: 10px 12px; line-height: 1.45; }
+      .mini-report-insights li.red { border-left-color: var(--red); } .mini-report-insights li.orange { border-left-color: var(--orange); } .mini-report-insights li.yellow { border-left-color: var(--yellow); } .mini-report-insights li.green { border-left-color: var(--green); } .mini-report-insights li.blue { border-left-color: var(--blue); } .mini-report-insights li.gray { border-left-color: var(--gray); }
+      .mini-report-stats { display: grid; gap: 8px; }
+      .mini-report-stat { display: flex; justify-content: space-between; gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; background: #fff; }
+      .mini-report-stat span { color: var(--muted); font-size: 12px; font-weight: 800; display: block; }
+      .mini-report-stat b { font-size: 14px; }
+      .mini-report-sections { display: grid; gap: 12px; }
+      .mini-report-section { border: 1px solid var(--line); border-radius: 18px; background: #fff; padding: 14px; }
+      .mini-report-section-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 10px; }
+      .mini-report-section-head h4 { margin: 0; font-size: 15px; }
+      .mini-report-item-list { display: grid; gap: 10px; }
+      .mini-report-item { border: 1px solid var(--line); border-left: 5px solid var(--gray); border-radius: 14px; background: #fcfdff; padding: 12px; }
+      .mini-report-item.red { border-left-color: var(--red); } .mini-report-item.orange { border-left-color: var(--orange); } .mini-report-item.yellow { border-left-color: var(--yellow); } .mini-report-item.green { border-left-color: var(--green); } .mini-report-item.blue { border-left-color: var(--blue); } .mini-report-item.gray { border-left-color: var(--gray); }
+      .mini-report-item-top { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+      .mini-report-item-title { font-weight: 900; line-height: 1.35; }
+      .mini-report-item-meta { margin-top: 4px; color: var(--muted); font-size: 12px; }
+      .mini-report-item-reason, .mini-report-item-action { margin-top: 8px; font-size: 12px; line-height: 1.5; }
+      .mini-report-more { margin-top: 4px; color: var(--muted); font-size: 12px; font-weight: 800; }
+      .mini-report-footer { margin-top: 16px; padding-top: 14px; border-top: 1px dashed #cbd5e1; color: var(--muted); font-size: 12px; line-height: 1.55; }
+      @media print { body { padding: 0; background: #fff; } .mini-report-sheet { box-shadow: none; border: 0; border-radius: 0; max-width: none; } }
+      @media (max-width: 800px) { body { padding: 10px; } .mini-report-topbar, .mini-report-header, .mini-report-item-top { display: grid; } .mini-report-kpis { grid-template-columns: 1fr 1fr; } .mini-report-grid { grid-template-columns: 1fr; } }
+    `)}
+  `;
+}
+
+function openCurrentDigestMiniReport(shouldPrint = false) {
+  const html = buildCurrentDigestMiniReportDocumentHtml();
+  if (!html) {
+    showError('Нет данных для формирования мини-отчета.');
+    return;
+  }
+  const win = window.open('', '_blank', 'noopener,noreferrer');
+  if (!win) {
+    showError('Браузер заблокировал всплывающее окно. Разрешите pop-up для этой страницы, чтобы открыть мини-отчет.');
+    return;
+  }
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+  if (shouldPrint) {
+    win.addEventListener('load', () => {
+      setTimeout(() => {
+        win.focus();
+        win.print();
+      }, 250);
+    });
+  }
+}
+
+function downloadCurrentDigestMiniReportHtml() {
+  const html = buildCurrentDigestMiniReportDocumentHtml();
+  if (!html) {
+    showError('Нет данных для выгрузки мини-отчета.');
+    return;
+  }
+  const safePerson = cleanText(state.digest.person || 'employee').replace(/[\/:*?"<>|]+/g, '_').replace(/\s+/g, '_');
+  const datePart = formatDate(state.exportDate || new Date()).replace(/\./g, '-');
+  downloadHtmlFile(html, `mini_report_${safePerson}_${datePart}.html`);
+}
+
+function downloadHtmlFile(html, fileName) {
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 function applyDigestFilters(items) {
