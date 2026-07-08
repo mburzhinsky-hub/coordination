@@ -20,7 +20,8 @@ const state = {
   digest: {
     person: '',
     role: '',
-    scope: 'urgent'
+    scope: 'urgent',
+    format: 'brief'
   }
 };
 
@@ -140,21 +141,37 @@ function bindUi() {
     await loadManifest();
   });
 
-  ['digestPersonSelect', 'digestRoleFilter', 'digestScopeFilter'].forEach(id => {
+  ['digestPersonSelect', 'digestRoleFilter', 'digestScopeFilter', 'digestFormatFilter'].forEach(id => {
     const node = el(id);
     if (!node) return;
     node.addEventListener('change', () => {
       if (id === 'digestPersonSelect') state.digest.person = node.value;
       if (id === 'digestRoleFilter') state.digest.role = node.value;
       if (id === 'digestScopeFilter') state.digest.scope = node.value;
+      if (id === 'digestFormatFilter') state.digest.format = node.value;
       renderDigests();
     });
   });
 
   const copyDigestBtn = el('copyDigestBtn');
-  if (copyDigestBtn) copyDigestBtn.addEventListener('click', copyCurrentDigest);
+  if (copyDigestBtn) copyDigestBtn.addEventListener('click', () => copyCurrentDigest());
+
+  const copyDigestBriefBtn = el('copyDigestBriefBtn');
+  if (copyDigestBriefBtn) copyDigestBriefBtn.addEventListener('click', () => copyCurrentDigest('brief'));
+
+  const copyDigestFullBtn = el('copyDigestFullBtn');
+  if (copyDigestFullBtn) copyDigestFullBtn.addEventListener('click', () => copyCurrentDigest('full'));
+
+  const downloadDigestTxtBtn = el('downloadDigestTxtBtn');
+  if (downloadDigestTxtBtn) downloadDigestTxtBtn.addEventListener('click', downloadCurrentDigestTxt);
 
   document.addEventListener('click', event => {
+    const copyTaskButton = event.target.closest('[data-copy-digest-task]');
+    if (copyTaskButton) {
+      copyDigestTask(copyTaskButton.dataset.copyDigestTask || '');
+      return;
+    }
+
     const button = event.target.closest('[data-digest-person]');
     if (!button) return;
     state.digest.person = button.dataset.digestPerson || '';
@@ -1111,11 +1128,15 @@ function renderDigests() {
   const personSelect = el('digestPersonSelect');
   if (personSelect && personSelect.value !== state.digest.person) personSelect.value = state.digest.person;
 
+  const formatSelect = el('digestFormatFilter');
+  if (formatSelect && formatSelect.value !== state.digest.format) formatSelect.value = state.digest.format;
+
   const rawPersonItems = entries.filter(item => item.person === state.digest.person);
   const personItems = applyDigestFilters(rawPersonItems);
   const selectedIndex = index.find(row => row.person === state.digest.person) || index[0];
   const scopeLabel = getDigestScopeLabel(state.digest.scope);
-  const digestText = buildDigestText(state.digest.person, personItems, scopeLabel);
+  const formatLabel = getDigestFormatLabel(state.digest.format);
+  const digestText = buildDigestText(state.digest.person, personItems, scopeLabel, state.digest.format);
 
   if (summary) {
     summary.innerHTML = [
@@ -1123,37 +1144,163 @@ function renderDigests() {
       `Выбран: ${state.digest.person}`,
       `Красная зона: ${selectedIndex.red}`,
       `Сегодня: ${selectedIndex.today}`,
-      `Все пункты: ${selectedIndex.total}`
+      `Все пункты: ${selectedIndex.total}`,
+      `Формат: ${formatLabel}`
     ].map(x => `<span class="summary-pill">${escapeHtml(x)}</span>`).join('');
   }
 
   content.innerHTML = `
-    <div class="digest-grid">
-      <div class="report-panel">
-        <h3>Кому писать первым</h3>
-        <p class="muted">Сортировка: красная зона, задачи на сегодня, общий объем действий.</p>
-        <div class="table-wrap digest-index-table">${tableHtml(index.slice(0, 40), [
-          ['Сотрудник', row => `<b>${escapeHtml(row.person)}</b><div class="small">${escapeHtml(row.rolesLabel)}</div>`],
-          ['Красная', row => badge(String(row.red), row.red ? 'red' : 'green')],
-          ['Сегодня', row => badge(String(row.today), row.today ? 'orange' : 'green')],
-          ['3 дня', row => String(row.soon)],
-          ['Гигиена', row => String(row.hygiene)],
-          ['Изм.', row => String(row.changes)],
-          ['Открыть', row => `<button class="button button-mini" data-digest-person="${escapeAttr(row.person)}">Открыть</button>`]
-        ])}</div>
+    ${renderDigestPersonKpis(selectedIndex, rawPersonItems, personItems)}
+    <div class="digest-layout">
+      <div class="report-panel digest-directory-panel">
+        <div class="panel-title-row">
+          <div>
+            <h3>Кому писать первым</h3>
+            <p class="muted">Сортировка: красная зона, задачи на сегодня, общий объем действий.</p>
+          </div>
+        </div>
+        <div class="digest-person-list">${renderDigestPeopleCards(index.slice(0, 60))}</div>
       </div>
-      <div class="report-panel digest-message-panel">
-        <h3>Готовый текст для отправки</h3>
-        <p class="muted">Сейчас включено: ${escapeHtml(scopeLabel)}. Кнопка сверху копирует этот текст.</p>
-        <div class="digest-message">${escapeHtml(digestText).replace(/\n/g, '<br>')}</div>
+
+      <div class="report-panel digest-board-panel">
+        <div class="panel-title-row">
+          <div>
+            <h3>Рабочая карточка: ${escapeHtml(state.digest.person)}</h3>
+            <p class="muted">Задачи сгруппированы по приоритету. У каждой карточки есть роль, причина попадания и конкретное действие.</p>
+          </div>
+        </div>
+        ${renderDigestBoard(personItems)}
+      </div>
+
+      <div class="report-panel digest-forward-panel">
+        <div class="panel-title-row">
+          <div>
+            <h3>Сообщение для пересылки</h3>
+            <p class="muted">Можно скопировать короткий текст, подробный текст, отдельную задачу или скачать TXT.</p>
+          </div>
+        </div>
+        <div class="digest-forward-actions">
+          <button class="button button-mini" id="copyDigestInlineBtn" type="button">Скопировать текущий формат</button>
+          <button class="button button-mini button-light" id="copyDigestBriefInlineBtn" type="button">Кратко</button>
+          <button class="button button-mini button-light" id="copyDigestFullInlineBtn" type="button">Подробно</button>
+        </div>
+        <div class="digest-message digest-forward-preview">${escapeHtml(digestText).replace(/\n/g, '<br>')}</div>
       </div>
     </div>
 
     <div class="report-panel report-panel-full">
-      <h3>Разбор по ролям: ${escapeHtml(state.digest.person)}</h3>
+      <h3>Разбор по ролям</h3>
       <p class="muted">Одна задача может попасть разным людям с разным смыслом: исполнителю — как действие, постановщику — как контроль, наблюдателю — как риск.</p>
       ${renderDigestRoleSections(personItems)}
     </div>
+  `;
+
+  const inlineCopy = el('copyDigestInlineBtn');
+  if (inlineCopy) inlineCopy.addEventListener('click', () => copyCurrentDigest());
+  const inlineBrief = el('copyDigestBriefInlineBtn');
+  if (inlineBrief) inlineBrief.addEventListener('click', () => copyCurrentDigest('brief'));
+  const inlineFull = el('copyDigestFullInlineBtn');
+  if (inlineFull) inlineFull.addEventListener('click', () => copyCurrentDigest('full'));
+}
+
+function renderDigestPersonKpis(selectedIndex, rawItems, filteredItems) {
+  const roleGroups = groupBy(rawItems, item => item.roleLabel);
+  const roleSummary = Object.entries(roleGroups)
+    .map(([role, rows]) => `${role}: ${rows.length}`)
+    .join(' · ') || 'Нет ролей по выбранным фильтрам';
+
+  return `
+    <div class="digest-person-kpis">
+      ${kpiHtml('Красная зона', selectedIndex.red, 'первый приоритет для отправки', selectedIndex.red ? 'red' : 'green')}
+      ${kpiHtml('Сегодня / реакция', selectedIndex.today, 'дедлайны и контроль', selectedIndex.today ? 'orange' : 'green')}
+      ${kpiHtml('В текущем фильтре', filteredItems.length, getDigestScopeLabel(state.digest.scope), filteredItems.length ? 'blue' : 'green')}
+      ${kpiHtml('Роли сотрудника', selectedIndex.roleCount, roleSummary, 'gray')}
+    </div>
+  `;
+}
+
+function renderDigestPeopleCards(index) {
+  if (!index.length) return '<div class="status-box">Нет сотрудников для дайджеста.</div>';
+  return index.map(row => {
+    const active = row.person === state.digest.person ? ' active' : '';
+    const color = row.red ? 'red' : row.today ? 'orange' : row.soon ? 'yellow' : 'blue';
+    return `
+      <button class="digest-person-card${active}" data-digest-person="${escapeAttr(row.person)}" type="button">
+        <span class="digest-person-main">
+          <b>${escapeHtml(row.person)}</b>
+          <span>${escapeHtml(row.rolesLabel || 'роль не определена')}</span>
+        </span>
+        <span class="digest-person-counters">
+          ${badge(`К ${row.red}`, row.red ? 'red' : 'green')}
+          ${badge(`С ${row.today}`, row.today ? 'orange' : 'green')}
+          ${badge(`Всего ${row.total}`, color)}
+        </span>
+      </button>
+    `;
+  }).join('');
+}
+
+function renderDigestBoard(items) {
+  if (!items.length) return '<div class="status-box">По выбранному фильтру у сотрудника нет пунктов для дайджеста.</div>';
+
+  const categories = Object.keys(DIGEST_CATEGORY_META).filter(category => items.some(item => item.category === category));
+  return `
+    <div class="digest-board">
+      ${categories.map(category => {
+        const meta = DIGEST_CATEGORY_META[category];
+        const categoryItems = items.filter(item => item.category === category).sort(compareDigestItems);
+        return `
+          <div class="digest-board-section">
+            <div class="digest-board-title">
+              ${badge(meta.label, meta.color)}
+              <span class="small">${categoryItems.length} пунктов</span>
+            </div>
+            <div class="digest-card-stack">
+              ${categoryItems.map(item => renderDigestTaskCard(item)).join('')}
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function renderDigestTaskCard(item) {
+  const task = item.task;
+  const deadline = task.deadline ? formatDateTime(task.deadline) : 'срок не указан';
+  const activity = task.lastActivity ? formatDateTime(task.lastActivity) : 'нет данных';
+  const project = task.project || 'Без проекта';
+  const taskKey = makeDigestItemKey(item.person, item.role, task);
+  return `
+    <article class="digest-task-card ${escapeAttr(item.color)}">
+      <div class="digest-task-top">
+        <div>
+          <div class="digest-task-title">${escapeHtml(task.title)}</div>
+          <div class="digest-task-meta">ID: ${escapeHtml(task.id)} · ${escapeHtml(project)}</div>
+        </div>
+        <div class="digest-task-badges">
+          ${badge(item.roleLabel, ROLE_META[item.role]?.color || 'gray')}
+          ${badge(item.priorityLabel, item.color)}
+        </div>
+      </div>
+      <div class="digest-task-grid">
+        <div><span>Статус</span><b>${escapeHtml(task.status || 'не указан')}</b></div>
+        <div><span>Срок</span><b>${escapeHtml(deadline)}</b></div>
+        <div><span>Риск</span><b>${escapeHtml(task.riskLabel)} · ${escapeHtml(String(task.riskScore))}</b></div>
+        <div><span>Активность</span><b>${escapeHtml(activity)}</b></div>
+      </div>
+      <div class="digest-task-flags">
+        ${item.flags.map(flag => `<span>${escapeHtml(flag)}</span>`).join('')}
+      </div>
+      <div class="digest-task-action">
+        <span>Что сделать</span>
+        <b>${escapeHtml(item.action)}</b>
+      </div>
+      <div class="digest-task-footer">
+        <span class="small">Ответственный: ${escapeHtml(task.responsible || 'не указан')} · Постановщик: ${escapeHtml(task.author || 'не указан')}</span>
+        <button class="button button-mini button-light" type="button" data-copy-digest-task="${escapeAttr(taskKey)}">Скопировать задачу</button>
+      </div>
+    </article>
   `;
 }
 
@@ -1163,28 +1310,12 @@ function renderDigestRoleSections(items) {
   const roles = Object.keys(ROLE_META).filter(role => items.some(item => item.role === role));
   return roles.map(role => {
     const roleItems = items.filter(item => item.role === role).sort(compareDigestItems);
-    const categories = Object.keys(DIGEST_CATEGORY_META).filter(category => roleItems.some(item => item.category === category));
     return `
       <div class="digest-role-block">
         <h4>${badge(ROLE_META[role].label, ROLE_META[role].color)} <span class="small">${roleItems.length} пунктов</span></h4>
-        ${categories.map(category => {
-          const categoryItems = roleItems.filter(item => item.category === category).sort(compareDigestItems);
-          const meta = DIGEST_CATEGORY_META[category];
-          return `
-            <div class="digest-category-block">
-              <div class="digest-category-title">${badge(meta.label, meta.color)}</div>
-              ${tableHtml(categoryItems, [
-                ['Приоритет', item => badge(item.priorityLabel, item.color)],
-                ['Задача', item => `<div class="task-title">${escapeHtml(item.task.title)}</div><div class="small">ID: ${escapeHtml(item.task.id)} · роли: ${escapeHtml(item.roleLabel)}</div>`],
-                ['Проект', item => `<div class="project-name">${escapeHtml(item.task.project)}</div>`],
-                ['Статус', item => escapeHtml(item.task.status)],
-                ['Срок', item => formatDateTime(item.task.deadline)],
-                ['Что не так', item => escapeHtml(item.flags.join('; '))],
-                ['Что сделать', item => `<div class="action">${escapeHtml(item.action)}</div>`]
-              ])}
-            </div>
-          `;
-        }).join('')}
+        <div class="digest-role-card-grid">
+          ${roleItems.map(item => renderDigestTaskCard(item)).join('')}
+        </div>
       </div>
     `;
   }).join('');
@@ -1206,7 +1337,7 @@ function buildDigestRoleEntries(tasks) {
     const used = new Set();
     const add = (person, role) => {
       const name = cleanText(person);
-      const key = normalizePersonKey(name);
+      const key = `${normalizePersonKey(name)}|${role}`;
       if (!name || /^не указан$/i.test(name) || used.has(key)) return;
       const item = buildDigestItem(name, role, task, changesByTaskId[String(task.id || task.title)] || []);
       used.add(key);
@@ -1359,13 +1490,23 @@ function getDigestScopeLabel(scope) {
   return 'красная зона и задачи на сегодня';
 }
 
-function buildDigestText(person, items, scopeLabel) {
+function getDigestFormatLabel(format) {
+  if (format === 'full') return 'подробный';
+  return 'краткий';
+}
+
+function buildDigestText(person, items, scopeLabel, format = 'brief') {
   const firstName = cleanText(person).split(/\s+/)[0] || person;
   const dateText = formatDate(state.exportDate || new Date());
+  const isBrief = format !== 'full';
+  const redCount = count(items, item => item.category === 'red');
+  const todayCount = count(items, item => item.category === 'today');
+
   const lines = [
     `${firstName}, доброе утро.`,
     '',
-    `Дайджест по задачам на ${dateText}: ${scopeLabel}.`
+    `Дайджест по задачам на ${dateText}: ${scopeLabel}.`,
+    `Итого: ${items.length}; красная зона: ${redCount}; сегодня/реакция: ${todayCount}.`
   ];
 
   if (!items.length) {
@@ -1377,17 +1518,16 @@ function buildDigestText(person, items, scopeLabel) {
   categories.forEach((category, categoryIndex) => {
     const meta = DIGEST_CATEGORY_META[category];
     const categoryItems = items.filter(item => item.category === category).sort(compareDigestItems);
-    lines.push('', `${categoryIndex + 1}. ${meta.label}`);
+    lines.push('', `${categoryIndex + 1}. ${meta.label} — ${categoryItems.length}`);
 
     const roles = Object.keys(ROLE_META).filter(role => categoryItems.some(item => item.role === role));
     roles.forEach(role => {
       const roleItems = categoryItems.filter(item => item.role === role).sort(compareDigestItems);
       lines.push(`${ROLE_META[role].label}:`);
-      roleItems.slice(0, 12).forEach(item => {
-        const deadline = item.task.deadline ? `, срок: ${formatDateTime(item.task.deadline)}` : ', срок не указан';
-        lines.push(`— [${item.task.id}] ${item.task.title} — ${item.flags.join('; ')}${deadline}. Действие: ${item.action}`);
+      roleItems.slice(0, isBrief ? 8 : 20).forEach(item => {
+        lines.push(formatDigestTextLine(item, isBrief));
       });
-      if (roleItems.length > 12) lines.push(`— ещё ${roleItems.length - 12} пунктов в дашборде.`);
+      if (roleItems.length > (isBrief ? 8 : 20)) lines.push(`— ещё ${roleItems.length - (isBrief ? 8 : 20)} пунктов в дашборде.`);
     });
   });
 
@@ -1395,10 +1535,53 @@ function buildDigestText(person, items, scopeLabel) {
   return lines.join('\n');
 }
 
-async function copyCurrentDigest() {
+function formatDigestTextLine(item, isBrief) {
+  const task = item.task;
+  const deadline = task.deadline ? formatDateTime(task.deadline) : 'срок не указан';
+  if (isBrief) {
+    return `— [${task.id}] ${task.title} — ${item.priorityLabel}; ${deadline}. Действие: ${item.action}`;
+  }
+  const project = task.project || 'Без проекта';
+  return [
+    `— [${task.id}] ${task.title}`,
+    `  Проект: ${project}`,
+    `  Роль: ${item.roleLabel}`,
+    `  Статус: ${task.status || 'не указан'}`,
+    `  Срок: ${deadline}`,
+    `  Почему попало: ${item.flags.join('; ')}`,
+    `  Что сделать: ${item.action}`
+  ].join('\n');
+}
+
+function makeDigestItemKey(person, role, task) {
+  return `${normalizePersonKey(person)}||${role}||${String(task.id || task.title)}`;
+}
+
+function findDigestItemByKey(key) {
   const entries = buildDigestRoleEntries(state.tasks || []);
-  const items = applyDigestFilters(entries.filter(item => item.person === state.digest.person));
-  const text = buildDigestText(state.digest.person || 'Сотрудник', items, getDigestScopeLabel(state.digest.scope));
+  return entries.find(item => makeDigestItemKey(item.person, item.role, item.task) === key) || null;
+}
+
+function buildDigestTaskForwardText(item) {
+  const task = item.task;
+  const deadline = task.deadline ? formatDateTime(task.deadline) : 'срок не указан';
+  const activity = task.lastActivity ? formatDateTime(task.lastActivity) : 'нет данных';
+  return [
+    `[${task.id}] ${task.title}`,
+    `Роль: ${item.roleLabel}`,
+    `Проект: ${task.project || 'Без проекта'}`,
+    `Ответственный: ${task.responsible || 'не указан'}`,
+    `Постановщик: ${task.author || 'не указан'}`,
+    `Статус: ${task.status || 'не указан'}`,
+    `Срок: ${deadline}`,
+    `Риск: ${task.riskLabel} ${task.riskScore}`,
+    `Последняя активность: ${activity}`,
+    `Причина: ${item.flags.join('; ')}`,
+    `Действие: ${item.action}`
+  ].join('\n');
+}
+
+async function copyTextToClipboard(text, successMessage) {
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       await navigator.clipboard.writeText(text);
@@ -1413,10 +1596,45 @@ async function copyCurrentDigest() {
       document.execCommand('copy');
       textarea.remove();
     }
-    showStatus(`Дайджест для ${state.digest.person || 'сотрудника'} скопирован в буфер обмена.`);
+    showStatus(successMessage);
   } catch (error) {
-    showError('Не удалось скопировать дайджест. Можно выделить текст в блоке “Готовый текст для отправки” вручную.');
+    showError('Не удалось скопировать текст. Выделите текст в блоке “Сообщение для пересылки” вручную.');
   }
+}
+
+async function copyCurrentDigest(formatOverride = null) {
+  const entries = buildDigestRoleEntries(state.tasks || []);
+  const items = applyDigestFilters(entries.filter(item => item.person === state.digest.person));
+  const format = formatOverride || state.digest.format || 'brief';
+  const text = buildDigestText(state.digest.person || 'Сотрудник', items, getDigestScopeLabel(state.digest.scope), format);
+  await copyTextToClipboard(text, `Дайджест для ${state.digest.person || 'сотрудника'} скопирован: ${getDigestFormatLabel(format)} формат.`);
+}
+
+async function copyDigestTask(key) {
+  const item = findDigestItemByKey(key);
+  if (!item) {
+    showError('Не удалось найти задачу для копирования. Обновите страницу и попробуйте еще раз.');
+    return;
+  }
+  await copyTextToClipboard(buildDigestTaskForwardText(item), `Задача [${item.task.id}] скопирована для пересылки.`);
+}
+
+function downloadCurrentDigestTxt() {
+  const entries = buildDigestRoleEntries(state.tasks || []);
+  const items = applyDigestFilters(entries.filter(item => item.person === state.digest.person));
+  const text = buildDigestText(state.digest.person || 'Сотрудник', items, getDigestScopeLabel(state.digest.scope), state.digest.format || 'brief');
+  const safePerson = cleanText(state.digest.person || 'employee').replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_');
+  downloadTextFile(text, `digest_${safePerson}_${formatDate(state.exportDate || new Date()).replace(/\./g, '-')}.txt`);
+}
+
+function downloadTextFile(text, fileName) {
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 function buildDigestCsvRows(tasks) {
@@ -1427,6 +1645,7 @@ function buildDigestCsvRows(tasks) {
     priority: item.priorityLabel,
     flags: item.flags.join('; '),
     action: item.action,
+    forward_text: buildDigestTaskForwardText(item),
     task_id: item.task.id,
     task: item.task.title,
     responsible: item.task.responsible,
