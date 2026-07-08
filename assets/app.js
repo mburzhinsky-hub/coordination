@@ -7,6 +7,9 @@ const state = {
   tasks: [],
   allRows: [],
   previousTasks: [],
+  previousExportName: null,
+  localExports: [],
+  ignoredCount: 0,
   filters: {
     responsible: '',
     project: '',
@@ -30,6 +33,37 @@ const settings = {
     noDeadline: 0.7
   }
 };
+
+
+const LOCAL_EXPORTS_STORAGE_KEY = 'bitrixTaskDashboard.localExports.v1';
+
+const PROJECT_CONTAINER_TITLES = [
+  'Грозный Музей космоса — техническая реализация',
+  'Музей имени Бахрушина — техническая реализация',
+  'ЦЗН "Печатники" — гарантийное сопровождение',
+  'Дом культур — обслуживание',
+  'Автопоезд 2.0 — обслуживание',
+  'Лужники — техническое сопровождение',
+  'Проекты маркетинга — техническое сопровождение',
+  'Общие офисные и внутренние задачи',
+  'Кресты Музей СПБ - техническая реализация',
+  'ЭКСПО 2027 - техническая реализация',
+  'Нац центр Рязань - техническая реализация',
+  'Музей Тапиау - тех поддержка',
+  'Просчеты ИТО',
+  'Задачи руководителя ИТО',
+  'Пресейл и техническая экспертиза (уровень Технического директора)',
+  'ЦСН - техническая реализация',
+  'Казанский ЦУМ "Навигатор будущего" — техническая реализация'
+];
+
+const IGNORED_DAILY_TASK_TITLES = [
+  'Ежедневная проверка статусов закупок/договоров',
+  'Ежедневный контроль выполнения задач'
+];
+
+const PROJECT_CONTAINER_KEYS = new Set(PROJECT_CONTAINER_TITLES.map(projectKey));
+const IGNORED_DAILY_TASK_KEYS = new Set(IGNORED_DAILY_TASK_TITLES.map(projectKey));
 
 const el = (id) => document.getElementById(id);
 
@@ -71,22 +105,48 @@ function bindUi() {
     await loadExport(state.exportName);
   });
 
+  el('uploadInput').addEventListener('change', async (event) => {
+    await handleUploadFiles(event.target.files);
+    event.target.value = '';
+  });
+
+  el('clearLocalBtn').addEventListener('click', async () => {
+    clearLocalExports();
+    await loadManifest();
+  });
+
   document.querySelectorAll('[data-export]').forEach(button => {
     button.addEventListener('click', () => exportCsv(button.dataset.export));
   });
 }
 
-async function loadManifest() {
+async function loadManifest(preferredFile = null) {
   try {
-    const res = await fetch(cacheBust('data/exports.json'));
-    if (!res.ok) throw new Error(`Не найден data/exports.json (${res.status})`);
-    state.manifest = await res.json();
-    const files = [...(state.manifest.files || [])].filter(Boolean);
-    if (!files.length) throw new Error('В data/exports.json нет файлов выгрузок.');
-    files.sort(compareExportNames);
+    loadLocalExports();
+    let repoFiles = [];
 
-    el('exportSelect').innerHTML = files.map(file => `<option value="${escapeAttr(file)}">${escapeHtml(file)}</option>`).join('');
-    const latest = files[files.length - 1];
+    try {
+      const res = await fetch(cacheBust('data/exports.json'));
+      if (!res.ok) throw new Error(`Не найден data/exports.json (${res.status})`);
+      state.manifest = await res.json();
+      repoFiles = [...(state.manifest.files || [])].filter(Boolean);
+    } catch (manifestError) {
+      state.manifest = { files: [] };
+      console.warn('Не удалось загрузить manifest:', manifestError);
+    }
+
+    const localFiles = state.localExports.map(item => item.name).filter(Boolean);
+    const files = unique([...repoFiles, ...localFiles]).sort(compareExportNames);
+    if (!files.length) {
+      showError('Нет выгрузок. Добавьте файл через кнопку “Загрузить выгрузку” или положите файл в data/raw/ и data/exports.json.');
+      return;
+    }
+
+    el('exportSelect').innerHTML = files.map(file => {
+      const source = getLocalExport(file) ? ' · с сайта' : '';
+      return `<option value="${escapeAttr(file)}">${escapeHtml(file + source)}</option>`;
+    }).join('');
+    const latest = preferredFile && files.includes(preferredFile) ? preferredFile : files[files.length - 1];
     el('exportSelect').value = latest;
     await loadExport(latest);
   } catch (error) {
@@ -100,14 +160,15 @@ async function loadExport(fileName) {
     state.exportDate = parseDateFromFileName(fileName) || new Date();
     showStatus(`Загружается выгрузка ${fileName}...`);
 
-    const text = await fetchText(`data/raw/${fileName}`);
+    const text = await fetchExportText(fileName);
     state.tasks = normalizeRows(parseBitrixHtmlExport(text), state.exportDate, fileName);
+    state.ignoredCount = state.tasks.ignoredCount || 0;
     state.allRows = [...state.tasks];
 
     await loadPreviousExport(fileName);
     fillFilters();
     renderAll();
-    showStatus(`Загружено задач: ${state.tasks.length}. Расчетная дата контроля: ${formatDateTime(state.exportDate)}.`);
+    showStatus(`Загружено задач в расчет: ${state.tasks.length}. Исключено: ${state.ignoredCount} (отложенные, проектные контейнеры, ежедневные задачи). Расчетная дата контроля: ${formatDateTime(state.exportDate)}.`);
   } catch (error) {
     showError(error.message);
   }
@@ -115,12 +176,14 @@ async function loadExport(fileName) {
 
 async function loadPreviousExport(currentFile) {
   state.previousTasks = [];
-  const files = [...(state.manifest.files || [])].filter(Boolean).sort(compareExportNames);
+  state.previousExportName = null;
+  const files = unique([...(state.manifest.files || []), ...state.localExports.map(item => item.name)]).filter(Boolean).sort(compareExportNames);
   const idx = files.indexOf(currentFile);
   if (idx <= 0) return;
   const previousFile = files[idx - 1];
+  state.previousExportName = previousFile;
   try {
-    const text = await fetchText(`data/raw/${previousFile}`);
+    const text = await fetchExportText(previousFile);
     const previousDate = parseDateFromFileName(previousFile) || state.exportDate;
     state.previousTasks = normalizeRows(parseBitrixHtmlExport(text), previousDate, previousFile);
   } catch (error) {
@@ -132,6 +195,78 @@ async function fetchText(url) {
   const res = await fetch(cacheBust(url));
   if (!res.ok) throw new Error(`Не удалось открыть ${url}. Проверь, что файл есть в репозитории и добавлен в data/exports.json.`);
   return await res.text();
+}
+
+async function fetchExportText(fileName) {
+  const local = getLocalExport(fileName);
+  if (local) return local.text;
+  return await fetchText(`data/raw/${fileName}`);
+}
+
+function loadLocalExports() {
+  try {
+    const raw = localStorage.getItem(LOCAL_EXPORTS_STORAGE_KEY);
+    state.localExports = raw ? JSON.parse(raw).filter(item => item && item.name && item.text) : [];
+  } catch (error) {
+    console.warn('Не удалось прочитать локальные выгрузки:', error);
+    state.localExports = [];
+  }
+}
+
+function saveLocalExports() {
+  try {
+    localStorage.setItem(LOCAL_EXPORTS_STORAGE_KEY, JSON.stringify(state.localExports));
+  } catch (error) {
+    showStatus('Выгрузка загружена в текущую сессию, но браузер не смог сохранить ее надолго. Возможно, файл слишком большой.');
+  }
+}
+
+function getLocalExport(fileName) {
+  return state.localExports.find(item => item.name === fileName);
+}
+
+async function handleUploadFiles(fileList) {
+  const files = Array.from(fileList || []).filter(file => /\.(xls|html?|txt)$/i.test(file.name));
+  if (!files.length) {
+    showError('Выберите выгрузку Битрикс24 в формате .xls.');
+    return;
+  }
+
+  let lastUploadedName = '';
+  for (const file of files) {
+    const text = await readFileAsText(file);
+    const name = normalizeUploadFileName(file.name);
+    lastUploadedName = name;
+    state.localExports = state.localExports.filter(item => item.name !== name);
+    state.localExports.push({ name, text, savedAt: new Date().toISOString() });
+  }
+
+  state.localExports.sort((a, b) => compareExportNames(a.name, b.name));
+  const lastUploaded = state.localExports.find(item => item.name === lastUploadedName);
+  state.localExports = state.localExports.filter(item => item.name !== lastUploadedName).slice(-11);
+  if (lastUploaded) state.localExports.push(lastUploaded);
+  state.localExports.sort((a, b) => compareExportNames(a.name, b.name));
+  saveLocalExports();
+  await loadManifest(lastUploadedName);
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Не удалось прочитать файл.'));
+    reader.readAsText(file);
+  });
+}
+
+function normalizeUploadFileName(name) {
+  const safe = cleanText(name).replace(/[^0-9A-Za-zА-Яа-яЁё_.\-]/g, '_');
+  return safe || `tasks_${new Date().toISOString().slice(0, 16).replace('T', '_').replace(':', '-')}.xls`;
+}
+
+function clearLocalExports() {
+  state.localExports = [];
+  try { localStorage.removeItem(LOCAL_EXPORTS_STORAGE_KEY); } catch (_) {}
 }
 
 function cacheBust(path) {
@@ -174,8 +309,12 @@ function findHeaderRow(rows) {
 }
 
 function normalizeRows(rows, asOf, exportFile) {
-  return rows.map((row, index) => normalizeTask(row, index, asOf, exportFile))
+  const normalized = rows
+    .map((row, index) => normalizeTask(row, index, asOf, exportFile))
     .filter(task => task.title || task.id);
+  const included = normalized.filter(task => !task.ignoreForDashboard);
+  included.ignoredCount = normalized.length - included.length;
+  return included;
 }
 
 function normalizeTask(row, index, asOf, exportFile) {
@@ -211,6 +350,9 @@ function normalizeTask(row, index, asOf, exportFile) {
   const isWaitingControl = /контрол/.test(normalizedStatus);
   const isInProgress = /выполня|работ|идет|идёт/.test(normalizedStatus);
   const isDeferred = /отлож/.test(normalizedStatus);
+  const isProjectContainer = PROJECT_CONTAINER_KEYS.has(projectKey(title));
+  const isIgnoredDaily = IGNORED_DAILY_TASK_KEYS.has(projectKey(title));
+  const ignoreForDashboard = isDeferred || isProjectContainer || isIgnoredDaily;
   const noDeadline = !deadline;
   const overdue = !isCompleted && deadline && deadline.getTime() < asOf.getTime();
   const deadlineDeltaDays = deadline ? diffDays(deadline, asOf) : null;
@@ -227,7 +369,7 @@ function normalizeTask(row, index, asOf, exportFile) {
     id, title, status, responsible, author, creator, parentTitle, parentId, project,
     deadline, created, changed, closed, priority, estimate, spent, planned,
     exportFile, exportDate: asOf,
-    isCompleted, isWaitingControl, isInProgress, isDeferred,
+    isCompleted, isWaitingControl, isInProgress, isDeferred, isProjectContainer, isIgnoredDaily, ignoreForDashboard,
     noDeadline, overdue, overdueDays, dueToday, dueSoon, deadlineDeltaDays,
     lastActivity, staleDays, stale7, stale14, noParent
   };
@@ -250,7 +392,6 @@ function calculateRisk(task) {
   if (task.noDeadline) score += 15;
   if (task.stale7) score += 10;
   if (task.stale14) score += 20;
-  if (task.isDeferred && task.overdue) score += 15;
   if (task.noParent) score += 10;
   score = Math.min(100, Math.round(score));
 
@@ -262,7 +403,6 @@ function calculateRisk(task) {
 }
 
 function recommendAction(task) {
-  if (task.isDeferred && task.overdue) return 'Принять решение: закрыть, снять, возобновить или перепланировать';
   if (task.overdue) return 'Запросить результат, блокер или новый срок';
   if (task.isWaitingControl) return 'Проверить результат и закрыть или вернуть на доработку';
   if (task.noDeadline) return 'Назначить крайний срок';
@@ -284,6 +424,7 @@ function buildSystemComment(task) {
 }
 
 function renderAll() {
+  renderUploadReport();
   const tasks = getFilteredTasks();
   renderKpis(tasks);
   renderPushList(tasks);
@@ -307,6 +448,352 @@ function getFilteredTasks() {
     }
     return true;
   });
+}
+
+function renderUploadReport() {
+  const target = el('uploadReportContent');
+  if (!target) return;
+
+  const report = buildExportReport();
+  const compareText = report.hasPrevious
+    ? `Сравнение с предыдущей выгрузкой: ${report.previousFile}`
+    : 'Предыдущая выгрузка не найдена — показан базовый срез без динамики.';
+
+  const movementHtml = report.hasPrevious
+    ? tableHtml(report.movementRows.slice(0, 80), [
+      ['Событие', r => badge(r.type, r.color)],
+      ['Деталь', r => escapeHtml(r.detail)],
+      ['Ответственный', r => escapeHtml(r.responsible)],
+      ['Проект', r => `<div class="project-name">${escapeHtml(r.project)}</div>`],
+      ['Задача', r => `<div class="task-title">${escapeHtml(r.title)}</div><div class="small">ID: ${escapeHtml(r.id)}</div>`],
+      ['Статус', r => escapeHtml(r.status)],
+      ['Срок', r => formatDateTime(r.deadline)],
+      ['Риск', r => r.riskScore ? `${r.riskScore}<div class="small">${escapeHtml(r.riskLabel)}</div>` : '']
+    ])
+    : '<div class="status-box">Для журнала движения нужна минимум одна предыдущая выгрузка. После следующей загрузки здесь появятся новые задачи, снятые просрочки, смены сроков, ответственных и статусов.</div>';
+
+  target.innerHTML = `
+    <div class="report-meta">
+      <span><b>Текущая выгрузка:</b> ${escapeHtml(report.currentFile || 'не выбрана')}</span>
+      <span><b>Дата контроля:</b> ${formatDateTime(state.exportDate)}</span>
+      <span><b>${escapeHtml(compareText)}</b></span>
+    </div>
+
+    <div class="report-kpi-grid">
+      ${reportMetricHtml('Всего задач', report.metrics.total, reportDelta(report, 'total'), 'В расчете после исключений', 'blue', 'neutral')}
+      ${reportMetricHtml('Новые задачи', report.diff.added.length, null, 'Появились с прошлого среза', report.diff.added.length ? 'blue' : 'green')}
+      ${reportMetricHtml('Ушли из выгрузки', report.diff.removed.length, null, 'Вероятно закрыты или не попали в фильтр Битрикс24', report.diff.removed.length ? 'green' : 'gray')}
+      ${reportMetricHtml('Новые просрочки', report.diff.newOverdue.length, null, 'Стали просроченными между срезами', report.diff.newOverdue.length ? 'red' : 'green')}
+      ${reportMetricHtml('Просрочки сняты', report.diff.resolvedOverdue.length, null, 'Были просрочены, теперь нет', report.diff.resolvedOverdue.length ? 'green' : 'gray')}
+      ${reportMetricHtml('Ждёт контроля', report.metrics.waitingControl, reportDelta(report, 'waitingControl'), 'Нужно принять или вернуть', report.metrics.waitingControl ? 'blue' : 'green')}
+      ${reportMetricHtml('Красный/оранжевый риск', report.metrics.highRisk, reportDelta(report, 'highRisk'), 'Задачи с риском 50+', report.metrics.highRisk ? 'orange' : 'green')}
+      ${reportMetricHtml('Без срока', report.metrics.noDeadline, reportDelta(report, 'noDeadline'), 'Нужно назначить дедлайн', report.metrics.noDeadline ? 'gray' : 'green')}
+      ${reportMetricHtml('Средний риск', report.metrics.avgRisk, reportDelta(report, 'avgRisk'), 'Средний индекс риска', riskColor(report.metrics.avgRisk), 'neutral')}
+    </div>
+
+    <div class="report-layout">
+      <div class="report-panel">
+        <h3>Управленческое резюме</h3>
+        <ul class="insight-list">${report.insights.map(item => `<li class="${escapeAttr(item.color || '')}">${escapeHtml(item.text)}</li>`).join('')}</ul>
+      </div>
+      <div class="report-panel">
+        <h3>Топ рисковых задач</h3>
+        ${tableHtml(report.topRiskTasks, [
+          ['Риск', t => badge(t.riskLabel, t.riskColor) + `<div class="small">${t.riskScore}</div>`],
+          ['Задача', t => `<div class="task-title">${escapeHtml(t.title)}</div>`],
+          ['Ответственный', t => escapeHtml(t.responsible)],
+          ['Срок', t => formatDateTime(t.deadline)],
+          ['Действие', t => escapeHtml(t.recommendedAction)]
+        ])}
+      </div>
+    </div>
+
+    <div class="report-layout">
+      <div class="report-panel">
+        <h3>Где проседает по людям</h3>
+        ${tableHtml(report.peopleRows.slice(0, 8), [
+          ['Ответственный', p => escapeHtml(p.responsible)],
+          ['Всего', p => formatDeltaValue(p.total, p.totalDelta)],
+          ['Просрочено', p => formatDeltaValue(p.overdue, p.overdueDelta, true)],
+          ['Загрузка', p => `${p.workloadScore.toFixed(1)}<div class="small">${escapeHtml(p.workloadCategory)}</div>`],
+          ['Доступность', p => badge(p.availabilityCategory, p.availabilityColor) + `<div class="small">${p.availabilityScore}</div>`],
+          ['Рекомендация', p => escapeHtml(p.recommendation)]
+        ])}
+      </div>
+      <div class="report-panel">
+        <h3>Где проседает по проектам</h3>
+        ${tableHtml(report.projectRows.slice(0, 8), [
+          ['Проект', p => `<div class="project-name">${escapeHtml(p.project)}</div>`],
+          ['Всего', p => formatDeltaValue(p.total, p.totalDelta)],
+          ['Просрочено', p => formatDeltaValue(p.overdue, p.overdueDelta, true)],
+          ['Ждёт контроля', p => formatDeltaValue(p.waitingControl, p.waitingControlDelta, true)],
+          ['Риск', p => formatDeltaValue(p.riskScore, p.riskDelta, true)]
+        ])}
+      </div>
+    </div>
+
+    <div class="report-panel report-panel-full">
+      <h3>Журнал движения задач</h3>
+      <p class="muted">Показывает события между текущей и предыдущей выгрузкой: новые задачи, исчезнувшие задачи, новые и снятые просрочки, смену статусов, сроков, ответственных и резкие изменения риска.</p>
+      <div class="table-wrap">${movementHtml}</div>
+    </div>
+  `;
+}
+
+function buildExportReport() {
+  const current = state.tasks || [];
+  const previous = state.previousTasks || [];
+  const hasPrevious = previous.length > 0;
+  const diff = compareTaskSnapshots(current, previous);
+  const metrics = buildMetricSnapshot(current);
+  const previousMetrics = hasPrevious ? buildMetricSnapshot(previous) : null;
+  const peopleRows = buildReportPeopleRows(current, previous);
+  const projectRows = buildReportProjectRows(current, previous);
+  const movementRows = buildMovementRows(diff);
+  const topRiskTasks = [...current]
+    .filter(t => t.riskScore > 0)
+    .sort((a, b) => b.riskScore - a.riskScore || b.overdueDays - a.overdueDays)
+    .slice(0, 8);
+
+  const report = {
+    currentFile: state.exportName,
+    previousFile: state.previousExportName,
+    hasPrevious,
+    metrics,
+    previousMetrics,
+    diff,
+    movementRows,
+    peopleRows,
+    projectRows,
+    topRiskTasks,
+    insights: []
+  };
+  report.insights = buildReportInsights(report);
+  return report;
+}
+
+function buildMetricSnapshot(tasks) {
+  return {
+    total: tasks.length,
+    overdue: count(tasks, t => t.overdue),
+    dueToday: count(tasks, t => t.dueToday),
+    dueSoon: count(tasks, t => t.dueSoon),
+    waitingControl: count(tasks, t => t.isWaitingControl),
+    noDeadline: count(tasks, t => t.noDeadline),
+    stale14: count(tasks, t => t.stale14),
+    redRisk: count(tasks, t => t.riskColor === 'red'),
+    highRisk: count(tasks, t => t.riskScore >= 50),
+    avgRisk: Math.round(avg(tasks.map(t => t.riskScore)))
+  };
+}
+
+function compareTaskSnapshots(current, previous) {
+  const currentById = mapByStableId(current);
+  const prevById = mapByStableId(previous);
+  const currentIds = new Set(Object.keys(currentById));
+  const prevIds = new Set(Object.keys(prevById));
+  const commonIds = [...currentIds].filter(id => prevIds.has(id));
+
+  return {
+    added: [...currentIds].filter(id => !prevIds.has(id)).map(id => currentById[id]),
+    removed: [...prevIds].filter(id => !currentIds.has(id)).map(id => prevById[id]),
+    newOverdue: commonIds.filter(id => currentById[id].overdue && !prevById[id].overdue).map(id => ({ current: currentById[id], previous: prevById[id] })),
+    resolvedOverdue: commonIds.filter(id => !currentById[id].overdue && prevById[id].overdue).map(id => ({ current: currentById[id], previous: prevById[id] })),
+    becameControl: commonIds.filter(id => currentById[id].isWaitingControl && !prevById[id].isWaitingControl).map(id => ({ current: currentById[id], previous: prevById[id] })),
+    leftControl: commonIds.filter(id => !currentById[id].isWaitingControl && prevById[id].isWaitingControl).map(id => ({ current: currentById[id], previous: prevById[id] })),
+    statusChanged: commonIds.filter(id => currentById[id].status !== prevById[id].status).map(id => ({ current: currentById[id], previous: prevById[id] })),
+    deadlineChanged: commonIds.filter(id => dateKey(currentById[id].deadline) !== dateKey(prevById[id].deadline)).map(id => ({ current: currentById[id], previous: prevById[id] })),
+    responsibleChanged: commonIds.filter(id => currentById[id].responsible !== prevById[id].responsible).map(id => ({ current: currentById[id], previous: prevById[id] })),
+    riskUp: commonIds.filter(id => currentById[id].riskScore - prevById[id].riskScore >= 25).map(id => ({ current: currentById[id], previous: prevById[id] })),
+    riskDown: commonIds.filter(id => prevById[id].riskScore - currentById[id].riskScore >= 25).map(id => ({ current: currentById[id], previous: prevById[id] }))
+  };
+}
+
+function buildMovementRows(diff) {
+  const rows = [];
+  const push = (priority, type, color, task, previous, detail) => {
+    rows.push({
+      priority,
+      type,
+      color,
+      id: task.id,
+      title: task.title,
+      responsible: task.responsible,
+      project: task.project,
+      status: task.status,
+      deadline: task.deadline,
+      riskScore: task.riskScore,
+      riskLabel: task.riskLabel,
+      detail
+    });
+  };
+
+  diff.newOverdue.forEach(({ current, previous }) => push(1, 'Новая просрочка', 'red', current, previous, `Было: ${formatDateTime(previous.deadline) || 'без срока'}; стало просрочено на ${current.overdueDays} дн.`));
+  diff.added.forEach(task => push(2, 'Новая задача', 'blue', task, null, 'Появилась в текущей выгрузке'));
+  diff.becameControl.forEach(({ current, previous }) => push(3, 'Стала ждать контроля', 'blue', current, previous, `Статус: ${previous.status || 'пусто'} → ${current.status || 'пусто'}`));
+  diff.riskUp.forEach(({ current, previous }) => push(4, 'Риск вырос', 'orange', current, previous, `Риск: ${previous.riskScore} → ${current.riskScore}`));
+  diff.deadlineChanged.forEach(({ current, previous }) => push(5, 'Изменился срок', 'yellow', current, previous, `Срок: ${formatDateTime(previous.deadline) || 'пусто'} → ${formatDateTime(current.deadline) || 'пусто'}`));
+  diff.responsibleChanged.forEach(({ current, previous }) => push(6, 'Сменился ответственный', 'yellow', current, previous, `${previous.responsible || 'пусто'} → ${current.responsible || 'пусто'}`));
+  diff.statusChanged.forEach(({ current, previous }) => push(7, 'Изменился статус', 'gray', current, previous, `${previous.status || 'пусто'} → ${current.status || 'пусто'}`));
+  diff.resolvedOverdue.forEach(({ current, previous }) => push(8, 'Просрочка снята', 'green', current, previous, `Было просрочено на ${previous.overdueDays} дн.; текущий срок: ${formatDateTime(current.deadline) || 'без срока'}`));
+  diff.leftControl.forEach(({ current, previous }) => push(9, 'Вышла из контроля', 'green', current, previous, `Статус: ${previous.status || 'пусто'} → ${current.status || 'пусто'}`));
+  diff.riskDown.forEach(({ current, previous }) => push(10, 'Риск снизился', 'green', current, previous, `Риск: ${previous.riskScore} → ${current.riskScore}`));
+  diff.removed.forEach(task => push(11, 'Ушла из выгрузки', 'green', task, task, 'Нет в текущей выгрузке: вероятно закрыта, отложена, стала контейнером или не попала в фильтр экспорта'));
+
+  return rows.sort((a, b) => a.priority - b.priority || b.riskScore - a.riskScore || String(a.title).localeCompare(String(b.title)));
+}
+
+function buildReportPeopleRows(current, previous) {
+  const prevMap = Object.fromEntries(summarizePeople(previous).map(p => [p.responsible, p]));
+  return summarizePeople(current).map(p => {
+    const prev = prevMap[p.responsible] || {};
+    return {
+      ...p,
+      totalDelta: p.total - (prev.total || 0),
+      overdueDelta: p.overdue - (prev.overdue || 0),
+      workloadDelta: p.workloadScore - (prev.workloadScore || 0),
+      availabilityDelta: p.availabilityScore - (prev.availabilityScore || 0)
+    };
+  }).sort((a, b) => b.overdue - a.overdue || b.overdueDelta - a.overdueDelta || b.workloadScore - a.workloadScore || a.availabilityScore - b.availabilityScore);
+}
+
+function buildReportProjectRows(current, previous) {
+  const prevMap = Object.fromEntries(summarizeProjects(previous).map(p => [p.project, p]));
+  return summarizeProjects(current).map(p => {
+    const prev = prevMap[p.project] || {};
+    return {
+      ...p,
+      totalDelta: p.total - (prev.total || 0),
+      overdueDelta: p.overdue - (prev.overdue || 0),
+      waitingControlDelta: p.waitingControl - (prev.waitingControl || 0),
+      riskDelta: p.riskScore - (prev.riskScore || 0)
+    };
+  }).sort((a, b) => b.overdue - a.overdue || b.riskDelta - a.riskDelta || b.riskScore - a.riskScore || b.total - a.total);
+}
+
+function buildReportInsights(report) {
+  const insights = [];
+  const m = report.metrics;
+  const pm = report.previousMetrics;
+  const d = report.diff;
+
+  if (!report.hasPrevious) {
+    insights.push({ color: 'blue', text: 'Это базовый срез. Следующая выгрузка включит полноценную динамику: новые задачи, закрытия, смену сроков, ответственных и статусов.' });
+  } else {
+    const totalDelta = m.total - pm.total;
+    insights.push({ color: totalDelta > 0 ? 'blue' : totalDelta < 0 ? 'green' : 'gray', text: `Объем активных задач: ${m.total} (${formatSigned(totalDelta)} к прошлой выгрузке).` });
+
+    if (d.newOverdue.length) insights.push({ color: 'red', text: `Появились новые просрочки: ${d.newOverdue.length}. Их нужно разобрать первыми.` });
+    if (d.resolvedOverdue.length) insights.push({ color: 'green', text: `Просрочки сняты по ${d.resolvedOverdue.length} задачам.` });
+    if (d.becameControl.length) insights.push({ color: 'blue', text: `${d.becameControl.length} задач перешли в “Ждёт контроля” — нужен быстрый прием результата или возврат.` });
+    if (d.deadlineChanged.length) insights.push({ color: 'yellow', text: `Срок изменился у ${d.deadlineChanged.length} задач. Это стоит проверить на предмет переносов без фактического прогресса.` });
+    if (m.highRisk - pm.highRisk > 0) insights.push({ color: 'orange', text: `Красных/оранжевых задач стало больше на ${m.highRisk - pm.highRisk}.` });
+    if (d.added.length || d.removed.length) insights.push({ color: 'gray', text: `Поток задач: новых ${d.added.length}, ушло из выгрузки ${d.removed.length}.` });
+  }
+
+  const worstPerson = report.peopleRows.find(p => p.overdue > 0 || p.workloadScore >= 21 || p.availabilityScore < 35);
+  if (worstPerson) {
+    insights.push({ color: worstPerson.overdue ? 'red' : 'orange', text: `Главная зона внимания по людям: ${worstPerson.responsible} — просрочек ${worstPerson.overdue}, загрузка ${worstPerson.workloadScore.toFixed(1)}, доступность ${worstPerson.availabilityScore}.` });
+  }
+
+  const worstProject = report.projectRows.find(p => p.overdue > 0 || p.riskScore >= 50);
+  if (worstProject) {
+    insights.push({ color: worstProject.overdue ? 'red' : 'orange', text: `Главная зона внимания по проектам: ${worstProject.project} — просрочек ${worstProject.overdue}, риск ${worstProject.riskScore}.` });
+  }
+
+  if (m.noDeadline) insights.push({ color: 'gray', text: `Задач без срока: ${m.noDeadline}. Это снижает управляемость и искажает прогноз загрузки.` });
+  if (m.stale14) insights.push({ color: 'orange', text: `Зависших без активности больше 14 дней: ${m.stale14}. Нужен запрос актуального статуса.` });
+
+  if (insights.length === 1 && report.hasPrevious) {
+    insights.push({ color: 'green', text: 'Критических ухудшений между выгрузками не найдено.' });
+  }
+  return insights.slice(0, 8);
+}
+
+function reportMetricHtml(label, value, delta, hint, color = 'blue', impact = 'lowerIsBetter') {
+  const deltaHtml = delta === null || delta === undefined
+    ? ''
+    : `<div class="metric-delta ${escapeAttr(delta.color)}">${escapeHtml(delta.text)}</div>`;
+  return `<div class="report-metric ${escapeAttr(color)}">
+    <div class="label">${escapeHtml(label)}</div>
+    <div class="value">${escapeHtml(String(value))}</div>
+    ${deltaHtml}
+    <div class="hint">${escapeHtml(hint || '')}</div>
+  </div>`;
+}
+
+function reportDelta(report, key) {
+  if (!report.previousMetrics) return null;
+  const diff = report.metrics[key] - report.previousMetrics[key];
+  const color = diff < 0 ? 'good' : diff > 0 ? 'bad' : 'neutral';
+  return { value: diff, color, text: `${formatSigned(diff)} к прошлой` };
+}
+
+function formatDeltaValue(value, delta, lowerIsBetter = false) {
+  const color = delta === 0 ? 'neutral' : lowerIsBetter ? (delta < 0 ? 'good' : 'bad') : (delta > 0 ? 'bad' : 'good');
+  const deltaHtml = delta ? `<div class="small metric-delta ${color}">${formatSigned(delta)}</div>` : '<div class="small metric-delta neutral">0</div>';
+  return `${escapeHtml(String(value))}${deltaHtml}`;
+}
+
+function formatSigned(value) {
+  const num = Number(value) || 0;
+  return num > 0 ? `+${num}` : String(num);
+}
+
+function buildReportCsvRows(report) {
+  const metricRows = [
+    ['Всего задач', 'total'],
+    ['Просрочено', 'overdue'],
+    ['Срок сегодня', 'dueToday'],
+    ['Ближайшие 3 дня', 'dueSoon'],
+    ['Ждёт контроля', 'waitingControl'],
+    ['Без срока', 'noDeadline'],
+    ['Нет активности >14', 'stale14'],
+    ['Красный/оранжевый риск', 'highRisk'],
+    ['Средний риск', 'avgRisk']
+  ].map(([label, key]) => ({
+    section: 'metric',
+    type: label,
+    value: report.metrics[key],
+    delta: report.previousMetrics ? report.metrics[key] - report.previousMetrics[key] : '',
+    responsible: '',
+    project: '',
+    task: '',
+    status: '',
+    deadline: '',
+    risk_score: '',
+    detail: ''
+  }));
+
+  const insightRows = report.insights.map(item => ({
+    section: 'insight',
+    type: item.color || '',
+    value: '',
+    delta: '',
+    responsible: '',
+    project: '',
+    task: '',
+    status: '',
+    deadline: '',
+    risk_score: '',
+    detail: item.text
+  }));
+
+  const movementRows = report.movementRows.map(row => ({
+    section: 'movement',
+    type: row.type,
+    value: '',
+    delta: '',
+    responsible: row.responsible,
+    project: row.project,
+    task: row.title,
+    status: row.status,
+    deadline: formatDateTime(row.deadline),
+    risk_score: row.riskScore,
+    detail: row.detail
+  }));
+
+  return [...metricRows, ...insightRows, ...movementRows];
 }
 
 function renderKpis(tasks) {
@@ -501,7 +988,6 @@ function renderHygiene(tasks) {
     ['Нет срока', count(tasks, t => t.noDeadline), 'Назначить дедлайн', 'gray'],
     ['Нет родителя', count(tasks, t => t.noParent), 'Привязать к проекту', 'gray'],
     ['Нет активности >14', count(tasks, t => t.stale14), 'Запросить статус', 'orange'],
-    ['Отложена + просрочена', count(tasks, t => t.isDeferred && t.overdue), 'Принять решение', 'red'],
     ['Ждёт контроля', count(tasks, t => t.isWaitingControl), 'Разобрать inbox', 'blue'],
     ['Нет оценки', count(tasks, t => !t.estimate), 'Нет данных по трудозатратам', 'gray']
   ];
@@ -522,7 +1008,6 @@ function buildHygieneIssues(tasks) {
     if (t.noDeadline) issues.push(issueRow(t, 'Нет срока', 'gray', 'Назначить крайний срок'));
     if (t.noParent) issues.push(issueRow(t, 'Нет родителя', 'gray', 'Привязать к проекту / родительской задаче'));
     if (t.stale14) issues.push(issueRow(t, 'Нет активности >14 дн.', 'orange', 'Запросить актуальный статус'));
-    if (t.isDeferred && t.overdue) issues.push(issueRow(t, 'Отложена + просрочена', 'red', 'Закрыть, снять, возобновить или перепланировать'));
     if (t.isWaitingControl) issues.push(issueRow(t, 'Ждёт контроля', 'blue', 'Принять или вернуть'));
     if (!t.estimate) issues.push(issueRow(t, 'Нет оценки', 'gray', 'Оценить трудозатраты, если это проектная задача'));
   });
@@ -635,6 +1120,7 @@ function exportCsv(kind) {
     project: p.project, total: p.total, overdue: p.overdue, due_today: p.dueToday, due_soon: p.dueSoon, waiting_control: p.waitingControl, no_deadline: p.noDeadline, stale_14: p.stale14, risk_score: p.riskScore, main_responsible: p.mainResponsible
   }));
   if (kind === 'hygiene') rows = buildHygieneIssues(tasks).map(i => ({ issue: i.issue, responsible: i.responsible, project: i.project, task: i.title, status: i.status, action: i.action }));
+  if (kind === 'report') rows = buildReportCsvRows(buildExportReport());
   downloadCsv(rows, `${kind}_${state.exportName.replace(/\.xls$/i, '')}.csv`);
 }
 
@@ -672,6 +1158,17 @@ function downloadCsv(rows, fileName) {
 function csvEscape(value) {
   const str = String(value ?? '');
   return `"${str.replace(/"/g, '""')}"`;
+}
+
+function projectKey(value) {
+  return cleanText(value)
+    .toLowerCase()
+    .replace(/[ё]/g, 'е')
+    .replace(/[«»„“”]/g, '"')
+    .replace(/[–—−]/g, '-')
+    .replace(/\s*-\s*/g, ' - ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function cleanText(value) {
