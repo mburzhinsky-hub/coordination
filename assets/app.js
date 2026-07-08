@@ -16,6 +16,11 @@ const state = {
     status: '',
     risk: '',
     search: ''
+  },
+  digest: {
+    person: '',
+    role: '',
+    scope: 'urgent'
   }
 };
 
@@ -31,6 +36,11 @@ const settings = {
     inProgress: 1.2,
     waitingControl: 0.8,
     noDeadline: 0.7
+  },
+  digest: {
+    dueSoonDays: 3,
+    staleDays: 14,
+    highRiskScore: 50
   }
 };
 
@@ -64,6 +74,21 @@ const IGNORED_DAILY_TASK_TITLES = [
 
 const PROJECT_CONTAINER_KEYS = new Set(PROJECT_CONTAINER_TITLES.map(projectKey));
 const IGNORED_DAILY_TASK_KEYS = new Set(IGNORED_DAILY_TASK_TITLES.map(projectKey));
+
+const ROLE_META = {
+  responsible: { label: 'Ответственный', color: 'blue', priority: 1 },
+  author: { label: 'Постановщик', color: 'orange', priority: 2 },
+  coExecutor: { label: 'Соисполнитель', color: 'yellow', priority: 3 },
+  observer: { label: 'Наблюдатель', color: 'gray', priority: 4 }
+};
+
+const DIGEST_CATEGORY_META = {
+  red: { label: 'Красная зона', color: 'red', priority: 1 },
+  today: { label: 'Сегодня / требуется реакция', color: 'orange', priority: 2 },
+  soon: { label: 'Ближайшие 3 дня', color: 'yellow', priority: 3 },
+  hygiene: { label: 'Гигиена задач', color: 'gray', priority: 4 },
+  changes: { label: 'Изменения с прошлой выгрузки', color: 'blue', priority: 5 }
+};
 
 const el = (id) => document.getElementById(id);
 
@@ -113,6 +138,30 @@ function bindUi() {
   el('clearLocalBtn').addEventListener('click', async () => {
     clearLocalExports();
     await loadManifest();
+  });
+
+  ['digestPersonSelect', 'digestRoleFilter', 'digestScopeFilter'].forEach(id => {
+    const node = el(id);
+    if (!node) return;
+    node.addEventListener('change', () => {
+      if (id === 'digestPersonSelect') state.digest.person = node.value;
+      if (id === 'digestRoleFilter') state.digest.role = node.value;
+      if (id === 'digestScopeFilter') state.digest.scope = node.value;
+      renderDigests();
+    });
+  });
+
+  const copyDigestBtn = el('copyDigestBtn');
+  if (copyDigestBtn) copyDigestBtn.addEventListener('click', copyCurrentDigest);
+
+  document.addEventListener('click', event => {
+    const button = event.target.closest('[data-digest-person]');
+    if (!button) return;
+    state.digest.person = button.dataset.digestPerson || '';
+    const select = el('digestPersonSelect');
+    if (select) select.value = state.digest.person;
+    switchTab('digests');
+    renderDigests();
   });
 
   document.querySelectorAll('[data-export]').forEach(button => {
@@ -332,6 +381,8 @@ function normalizeTask(row, index, asOf, exportFile) {
   const responsible = get('Ответственный', 'Исполнитель') || 'Не указан';
   const creator = get('Создатель');
   const author = get('Постановщик', 'Автор') || creator;
+  const coExecutors = splitPeople(get('Соисполнители', 'Соисполнитель', 'Участники'));
+  const observers = splitPeople(get('Наблюдатели', 'Наблюдатель'));
   const parentTitle = get('Название базовой задачи', 'Базовая задача', 'Родительская задача');
   const parentId = get('ID базовой задачи', 'ID родительской задачи');
   const projectRaw = get('Проект', 'Группа', 'Рабочая группа');
@@ -366,7 +417,7 @@ function normalizeTask(row, index, asOf, exportFile) {
   const overdueDays = overdue ? Math.max(0, Math.ceil((asOf - deadline) / 86400000)) : 0;
 
   const task = {
-    id, title, status, responsible, author, creator, parentTitle, parentId, project,
+    id, title, status, responsible, author, creator, coExecutors, observers, parentTitle, parentId, project,
     deadline, created, changed, closed, priority, estimate, spent, planned,
     exportFile, exportDate: asOf,
     isCompleted, isWaitingControl, isInProgress, isDeferred, isProjectContainer, isIgnoredDaily, ignoreForDashboard,
@@ -432,6 +483,7 @@ function renderAll() {
   renderProjects(tasks);
   renderControl(tasks);
   renderHygiene(tasks);
+  renderDigests();
   renderDynamic();
   renderAllTasks(tasks);
 }
@@ -443,7 +495,7 @@ function getFilteredTasks() {
     if (state.filters.status && task.status !== state.filters.status) return false;
     if (state.filters.risk && task.riskColor !== state.filters.risk) return false;
     if (state.filters.search) {
-      const haystack = [task.title, task.project, task.responsible, task.status, task.author, task.id].join(' ').toLowerCase();
+      const haystack = [task.title, task.project, task.responsible, task.status, task.author, task.coExecutors.join(' '), task.observers.join(' '), task.id].join(' ').toLowerCase();
       if (!haystack.includes(state.filters.search)) return false;
     }
     return true;
@@ -1018,6 +1070,378 @@ function issueRow(t, issue, color, action) {
   return { issue, color, action, responsible: t.responsible, project: t.project, title: t.title, status: t.status, id: t.id };
 }
 
+function fillDigestPeople() {
+  const select = el('digestPersonSelect');
+  if (!select) return;
+  const entries = buildDigestRoleEntries(state.tasks || []);
+  const index = buildDigestIndexFromEntries(entries);
+  const people = index.map(row => row.person);
+
+  if (!people.length) {
+    select.innerHTML = '<option value="">Нет срочных пунктов</option>';
+    state.digest.person = '';
+    return;
+  }
+
+  if (!state.digest.person || !people.includes(state.digest.person)) {
+    state.digest.person = people[0];
+  }
+
+  select.innerHTML = people.map(person => `<option value="${escapeAttr(person)}">${escapeHtml(person)}</option>`).join('');
+  select.value = state.digest.person;
+}
+
+function renderDigests() {
+  const content = el('digestContent');
+  if (!content) return;
+
+  const entries = buildDigestRoleEntries(state.tasks || []);
+  const index = buildDigestIndexFromEntries(entries);
+  const summary = el('digestSummary');
+
+  if (!index.length) {
+    if (summary) summary.innerHTML = '<span class="summary-pill">Нет задач для ежедневных дайджестов</span>';
+    content.innerHTML = '<div class="status-box">По текущим правилам срочных персональных пунктов нет: нет просрочек, дедлайнов на сегодня, задач без срока, ожидания контроля, зависаний или значимых изменений.</div>';
+    return;
+  }
+
+  const people = index.map(row => row.person);
+  if (!state.digest.person || !people.includes(state.digest.person)) state.digest.person = people[0];
+
+  const personSelect = el('digestPersonSelect');
+  if (personSelect && personSelect.value !== state.digest.person) personSelect.value = state.digest.person;
+
+  const rawPersonItems = entries.filter(item => item.person === state.digest.person);
+  const personItems = applyDigestFilters(rawPersonItems);
+  const selectedIndex = index.find(row => row.person === state.digest.person) || index[0];
+  const scopeLabel = getDigestScopeLabel(state.digest.scope);
+  const digestText = buildDigestText(state.digest.person, personItems, scopeLabel);
+
+  if (summary) {
+    summary.innerHTML = [
+      `Сотрудников в дайджестах: ${index.length}`,
+      `Выбран: ${state.digest.person}`,
+      `Красная зона: ${selectedIndex.red}`,
+      `Сегодня: ${selectedIndex.today}`,
+      `Все пункты: ${selectedIndex.total}`
+    ].map(x => `<span class="summary-pill">${escapeHtml(x)}</span>`).join('');
+  }
+
+  content.innerHTML = `
+    <div class="digest-grid">
+      <div class="report-panel">
+        <h3>Кому писать первым</h3>
+        <p class="muted">Сортировка: красная зона, задачи на сегодня, общий объем действий.</p>
+        <div class="table-wrap digest-index-table">${tableHtml(index.slice(0, 40), [
+          ['Сотрудник', row => `<b>${escapeHtml(row.person)}</b><div class="small">${escapeHtml(row.rolesLabel)}</div>`],
+          ['Красная', row => badge(String(row.red), row.red ? 'red' : 'green')],
+          ['Сегодня', row => badge(String(row.today), row.today ? 'orange' : 'green')],
+          ['3 дня', row => String(row.soon)],
+          ['Гигиена', row => String(row.hygiene)],
+          ['Изм.', row => String(row.changes)],
+          ['Открыть', row => `<button class="button button-mini" data-digest-person="${escapeAttr(row.person)}">Открыть</button>`]
+        ])}</div>
+      </div>
+      <div class="report-panel digest-message-panel">
+        <h3>Готовый текст для отправки</h3>
+        <p class="muted">Сейчас включено: ${escapeHtml(scopeLabel)}. Кнопка сверху копирует этот текст.</p>
+        <div class="digest-message">${escapeHtml(digestText).replace(/\n/g, '<br>')}</div>
+      </div>
+    </div>
+
+    <div class="report-panel report-panel-full">
+      <h3>Разбор по ролям: ${escapeHtml(state.digest.person)}</h3>
+      <p class="muted">Одна задача может попасть разным людям с разным смыслом: исполнителю — как действие, постановщику — как контроль, наблюдателю — как риск.</p>
+      ${renderDigestRoleSections(personItems)}
+    </div>
+  `;
+}
+
+function renderDigestRoleSections(items) {
+  if (!items.length) return '<div class="status-box">По выбранному фильтру у сотрудника нет пунктов для дайджеста.</div>';
+
+  const roles = Object.keys(ROLE_META).filter(role => items.some(item => item.role === role));
+  return roles.map(role => {
+    const roleItems = items.filter(item => item.role === role).sort(compareDigestItems);
+    const categories = Object.keys(DIGEST_CATEGORY_META).filter(category => roleItems.some(item => item.category === category));
+    return `
+      <div class="digest-role-block">
+        <h4>${badge(ROLE_META[role].label, ROLE_META[role].color)} <span class="small">${roleItems.length} пунктов</span></h4>
+        ${categories.map(category => {
+          const categoryItems = roleItems.filter(item => item.category === category).sort(compareDigestItems);
+          const meta = DIGEST_CATEGORY_META[category];
+          return `
+            <div class="digest-category-block">
+              <div class="digest-category-title">${badge(meta.label, meta.color)}</div>
+              ${tableHtml(categoryItems, [
+                ['Приоритет', item => badge(item.priorityLabel, item.color)],
+                ['Задача', item => `<div class="task-title">${escapeHtml(item.task.title)}</div><div class="small">ID: ${escapeHtml(item.task.id)} · роли: ${escapeHtml(item.roleLabel)}</div>`],
+                ['Проект', item => `<div class="project-name">${escapeHtml(item.task.project)}</div>`],
+                ['Статус', item => escapeHtml(item.task.status)],
+                ['Срок', item => formatDateTime(item.task.deadline)],
+                ['Что не так', item => escapeHtml(item.flags.join('; '))],
+                ['Что сделать', item => `<div class="action">${escapeHtml(item.action)}</div>`]
+              ])}
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }).join('');
+}
+
+function applyDigestFilters(items) {
+  let rows = [...items];
+  if (state.digest.role) rows = rows.filter(item => item.role === state.digest.role);
+  if (state.digest.scope === 'urgent') rows = rows.filter(item => item.category === 'red' || item.category === 'today');
+  if (state.digest.scope === 'red') rows = rows.filter(item => item.category === 'red');
+  return rows.sort(compareDigestItems);
+}
+
+function buildDigestRoleEntries(tasks) {
+  const changesByTaskId = buildTaskChangeLookup();
+  const entries = [];
+
+  tasks.forEach(task => {
+    const used = new Set();
+    const add = (person, role) => {
+      const name = cleanText(person);
+      const key = normalizePersonKey(name);
+      if (!name || /^не указан$/i.test(name) || used.has(key)) return;
+      const item = buildDigestItem(name, role, task, changesByTaskId[String(task.id || task.title)] || []);
+      used.add(key);
+      if (item) entries.push(item);
+    };
+
+    add(task.responsible, 'responsible');
+    add(task.author, 'author');
+    (task.coExecutors || []).forEach(person => add(person, 'coExecutor'));
+    (task.observers || []).forEach(person => add(person, 'observer'));
+  });
+
+  return entries.sort(compareDigestItems);
+}
+
+function buildDigestItem(person, role, task, changes) {
+  const flags = [];
+  const addFlag = (text, category, color, priority) => flags.push({ text, category, color, priority });
+  const isObserver = role === 'observer';
+  const isAuthor = role === 'author';
+  const highRisk = task.riskScore >= settings.digest.highRiskScore;
+  const redRisk = task.riskScore >= 80;
+  const deadlineDays = task.deadlineDeltaDays;
+
+  if (task.overdue) addFlag(`Просрочено ${task.overdueDays} дн.`, 'red', 'red', 1);
+  if (redRisk) addFlag(`Красный риск ${task.riskScore}`, 'red', 'red', 2);
+  else if (highRisk && !isObserver) addFlag(`Высокий риск ${task.riskScore}`, 'red', 'orange', 3);
+
+  if (!isObserver && task.dueToday) addFlag('Срок сегодня', 'today', 'orange', 4);
+  if ((isAuthor || role === 'responsible') && task.isWaitingControl) addFlag('Ждёт контроля', 'today', 'blue', 5);
+  if (isObserver && task.isWaitingControl && highRisk) addFlag('Критичная задача ждёт контроля', 'today', 'blue', 5);
+  if (!isObserver && task.dueSoon && !task.dueToday && !task.overdue) addFlag(`Срок в ближайшие ${settings.digest.dueSoonDays} дн.${deadlineDays !== null ? ` (${deadlineDays} дн.)` : ''}`, 'soon', 'yellow', 6);
+  if (!isObserver && task.noDeadline) addFlag('Нет крайнего срока', 'hygiene', 'gray', 7);
+  if (!isObserver && task.staleDays !== null && task.staleDays > settings.digest.staleDays) addFlag(`Нет активности ${task.staleDays} дн.`, 'hygiene', 'gray', 8);
+
+  if (!isObserver && changes.length) {
+    changes.slice(0, 3).forEach(change => addFlag(change.text, 'changes', change.color || 'blue', 9));
+  }
+
+  if (!flags.length) return null;
+
+  const primary = flags.slice().sort((a, b) => a.priority - b.priority)[0];
+  const meta = DIGEST_CATEGORY_META[primary.category] || DIGEST_CATEGORY_META.hygiene;
+  return {
+    person,
+    role,
+    roleLabel: ROLE_META[role]?.label || role,
+    category: primary.category,
+    categoryLabel: meta.label,
+    color: primary.color || meta.color,
+    priority: primary.priority,
+    priorityLabel: primary.text,
+    flags: unique(flags.map(flag => flag.text)),
+    action: buildDigestAction(task, role, flags),
+    task
+  };
+}
+
+function buildDigestAction(task, role, flags) {
+  const flagText = flags.map(flag => flag.text).join(' ').toLowerCase();
+
+  if (role === 'responsible') {
+    if (task.overdue) return 'Дать результат, блокер или новый реалистичный срок. Обновить комментарий в задаче.';
+    if (task.dueToday) return 'До конца дня подтвердить готовность или заранее обозначить риск.';
+    if (task.isWaitingControl) return 'Проверить, что результат передан на контроль и есть все материалы для приемки.';
+    if (task.noDeadline) return 'Согласовать и поставить крайний срок.';
+    if (task.stale14) return 'Обновить статус и следующий шаг в задаче.';
+    if (flagText.includes('новая задача')) return 'Принять задачу в работу: срок, следующий шаг, блокеры.';
+    return task.recommendedAction;
+  }
+
+  if (role === 'author') {
+    if (task.isWaitingControl) return 'Принять результат, закрыть задачу или вернуть на доработку с понятным комментарием.';
+    if (task.overdue) return `Проконтролировать исполнителя: ${task.responsible || 'ответственный'} должен дать результат, блокер или новый срок.`;
+    if (task.noDeadline) return 'Поставить исполнителю крайний срок, иначе задача неуправляема.';
+    if (task.stale14) return 'Запросить актуальный статус у исполнителя.';
+    if (task.dueToday || task.dueSoon) return 'Проверить готовность заранее, чтобы не получить просрочку.';
+    return 'Проконтролировать статус и следующий шаг.';
+  }
+
+  if (role === 'coExecutor') {
+    if (task.overdue || task.dueToday) return 'Дать свою часть результата или написать, что блокирует выполнение.';
+    if (task.dueSoon) return 'Проверить, нужна ли твоя часть до дедлайна.';
+    if (task.noDeadline) return 'Уточнить срок своей части у ответственного или постановщика.';
+    return 'Проверить, требуется ли твоя реакция как соисполнителя.';
+  }
+
+  if (role === 'observer') {
+    if (task.overdue || task.riskScore >= 80) return 'Посмотреть риск по задаче и при необходимости подключиться к эскалации.';
+    if (task.isWaitingControl) return 'Проконтролировать, что результат будет принят или возвращен без зависания.';
+    return 'Держать задачу на контроле как наблюдатель.';
+  }
+
+  return task.recommendedAction;
+}
+
+function buildTaskChangeLookup() {
+  const lookup = {};
+  if (!state.previousTasks || !state.previousTasks.length) return lookup;
+  const diff = compareTaskSnapshots(state.tasks || [], state.previousTasks || []);
+  const add = (task, text, color = 'blue', detail = '') => {
+    const id = String(task.id || task.title);
+    (lookup[id] ||= []).push({ text, color, detail });
+  };
+
+  diff.added.forEach(task => add(task, 'Новая задача', 'blue'));
+  diff.becameControl.forEach(({ current }) => add(current, 'Перешла в “Ждёт контроля”', 'blue'));
+  diff.deadlineChanged.forEach(({ current, previous }) => add(current, `Срок изменился: ${formatDateTime(previous.deadline) || 'без срока'} → ${formatDateTime(current.deadline) || 'без срока'}`, 'yellow'));
+  diff.responsibleChanged.forEach(({ current, previous }) => add(current, `Ответственный изменился: ${previous.responsible || 'пусто'} → ${current.responsible || 'пусто'}`, 'yellow'));
+  diff.statusChanged.forEach(({ current, previous }) => add(current, `Статус изменился: ${previous.status || 'пусто'} → ${current.status || 'пусто'}`, 'gray'));
+  diff.riskUp.forEach(({ current, previous }) => add(current, `Риск вырос: ${previous.riskScore} → ${current.riskScore}`, 'orange'));
+  diff.resolvedOverdue.forEach(({ current }) => add(current, 'Просрочка снята', 'green'));
+  return lookup;
+}
+
+function buildDigestIndexFromEntries(entries) {
+  const groups = groupBy(entries, item => item.person);
+  return Object.entries(groups).map(([person, rows]) => {
+    const roles = unique(rows.map(row => row.roleLabel));
+    return {
+      person,
+      total: rows.length,
+      red: count(rows, row => row.category === 'red'),
+      today: count(rows, row => row.category === 'today'),
+      soon: count(rows, row => row.category === 'soon'),
+      hygiene: count(rows, row => row.category === 'hygiene'),
+      changes: count(rows, row => row.category === 'changes'),
+      rolesLabel: roles.join(', '),
+      roleCount: roles.length
+    };
+  }).sort((a, b) => b.red - a.red || b.today - a.today || b.total - a.total || a.person.localeCompare(b.person));
+}
+
+function compareDigestItems(a, b) {
+  const categoryA = DIGEST_CATEGORY_META[a.category]?.priority || 99;
+  const categoryB = DIGEST_CATEGORY_META[b.category]?.priority || 99;
+  const roleA = ROLE_META[a.role]?.priority || 99;
+  const roleB = ROLE_META[b.role]?.priority || 99;
+  return categoryA - categoryB
+    || roleA - roleB
+    || a.priority - b.priority
+    || b.task.riskScore - a.task.riskScore
+    || b.task.overdueDays - a.task.overdueDays
+    || String(a.task.title).localeCompare(String(b.task.title));
+}
+
+function getDigestScopeLabel(scope) {
+  if (scope === 'all') return 'все пункты дайджеста';
+  if (scope === 'red') return 'только красная зона';
+  return 'красная зона и задачи на сегодня';
+}
+
+function buildDigestText(person, items, scopeLabel) {
+  const firstName = cleanText(person).split(/\s+/)[0] || person;
+  const dateText = formatDate(state.exportDate || new Date());
+  const lines = [
+    `${firstName}, доброе утро.`,
+    '',
+    `Дайджест по задачам на ${dateText}: ${scopeLabel}.`
+  ];
+
+  if (!items.length) {
+    lines.push('', 'По выбранному фильтру срочных пунктов нет.');
+    return lines.join('\n');
+  }
+
+  const categories = Object.keys(DIGEST_CATEGORY_META).filter(category => items.some(item => item.category === category));
+  categories.forEach((category, categoryIndex) => {
+    const meta = DIGEST_CATEGORY_META[category];
+    const categoryItems = items.filter(item => item.category === category).sort(compareDigestItems);
+    lines.push('', `${categoryIndex + 1}. ${meta.label}`);
+
+    const roles = Object.keys(ROLE_META).filter(role => categoryItems.some(item => item.role === role));
+    roles.forEach(role => {
+      const roleItems = categoryItems.filter(item => item.role === role).sort(compareDigestItems);
+      lines.push(`${ROLE_META[role].label}:`);
+      roleItems.slice(0, 12).forEach(item => {
+        const deadline = item.task.deadline ? `, срок: ${formatDateTime(item.task.deadline)}` : ', срок не указан';
+        lines.push(`— [${item.task.id}] ${item.task.title} — ${item.flags.join('; ')}${deadline}. Действие: ${item.action}`);
+      });
+      if (roleItems.length > 12) lines.push(`— ещё ${roleItems.length - 12} пунктов в дашборде.`);
+    });
+  });
+
+  lines.push('', 'Просьба отработать красную зону первой и обновить статусы в Битрикс24.');
+  return lines.join('\n');
+}
+
+async function copyCurrentDigest() {
+  const entries = buildDigestRoleEntries(state.tasks || []);
+  const items = applyDigestFilters(entries.filter(item => item.person === state.digest.person));
+  const text = buildDigestText(state.digest.person || 'Сотрудник', items, getDigestScopeLabel(state.digest.scope));
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-9999px';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      textarea.remove();
+    }
+    showStatus(`Дайджест для ${state.digest.person || 'сотрудника'} скопирован в буфер обмена.`);
+  } catch (error) {
+    showError('Не удалось скопировать дайджест. Можно выделить текст в блоке “Готовый текст для отправки” вручную.');
+  }
+}
+
+function buildDigestCsvRows(tasks) {
+  return buildDigestRoleEntries(tasks || []).map(item => ({
+    person: item.person,
+    role: item.roleLabel,
+    category: item.categoryLabel,
+    priority: item.priorityLabel,
+    flags: item.flags.join('; '),
+    action: item.action,
+    task_id: item.task.id,
+    task: item.task.title,
+    responsible: item.task.responsible,
+    author: item.task.author,
+    co_executors: personListLabel(item.task.coExecutors),
+    observers: personListLabel(item.task.observers),
+    project: item.task.project,
+    status: item.task.status,
+    deadline: formatDateTime(item.task.deadline),
+    overdue_days: item.task.overdueDays,
+    risk_score: item.task.riskScore,
+    risk: item.task.riskLabel
+  }));
+}
+
 function renderDynamic() {
   if (!state.previousTasks.length) {
     el('dynamicContent').innerHTML = '<p class="muted">Для динамики нужно минимум две выгрузки. Добавьте следующую выгрузку в data/raw/ и data/exports.json.</p>';
@@ -1072,6 +1496,7 @@ function fillFilters() {
   fillSelect('filterResponsible', unique(state.tasks.map(t => t.responsible)).sort());
   fillSelect('filterProject', unique(state.tasks.map(t => t.project)).sort());
   fillSelect('filterStatus', unique(state.tasks.map(t => t.status)).sort());
+  fillDigestPeople();
 }
 
 function fillSelect(id, values) {
@@ -1121,6 +1546,7 @@ function exportCsv(kind) {
   }));
   if (kind === 'hygiene') rows = buildHygieneIssues(tasks).map(i => ({ issue: i.issue, responsible: i.responsible, project: i.project, task: i.title, status: i.status, action: i.action }));
   if (kind === 'report') rows = buildReportCsvRows(buildExportReport());
+  if (kind === 'digest') rows = buildDigestCsvRows(state.tasks);
   downloadCsv(rows, `${kind}_${state.exportName.replace(/\.xls$/i, '')}.csv`);
 }
 
@@ -1137,6 +1563,8 @@ function taskCsvRow(t) {
     overdue_days: t.overdueDays,
     last_activity: formatDateTime(t.lastActivity),
     author: t.author,
+    co_executors: t.coExecutors.join(', '),
+    observers: t.observers.join(', '),
     id: t.id,
     comment: t.systemComment
   };
@@ -1158,6 +1586,23 @@ function downloadCsv(rows, fileName) {
 function csvEscape(value) {
   const str = String(value ?? '');
   return `"${str.replace(/"/g, '""')}"`;
+}
+
+function splitPeople(value) {
+  const text = cleanText(value);
+  if (!text) return [];
+  return unique(text
+    .split(/[,;\n]+/)
+    .map(item => cleanText(item))
+    .filter(item => item && !/^нет$/i.test(item)));
+}
+
+function normalizePersonKey(value) {
+  return cleanText(value).toLowerCase().replace(/[ё]/g, 'е');
+}
+
+function personListLabel(list) {
+  return (list || []).filter(Boolean).join(', ');
 }
 
 function projectKey(value) {

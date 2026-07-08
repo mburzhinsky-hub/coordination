@@ -73,6 +73,7 @@
       <button class="tab" data-tab="projects">Проекты</button>
       <button class="tab" data-tab="control">Ждёт контроля</button>
       <button class="tab" data-tab="hygiene">Гигиена</button>
+      <button class="tab" data-tab="digests">Дайджесты</button>
       <button class="tab" data-tab="dynamic">Динамика</button>
       <button class="tab" data-tab="all">Все задачи</button>
       <button class="tab" data-tab="help">Как обновлять</button>
@@ -137,6 +138,46 @@
       </div>
     </section>
 
+    <section id="tab-digests" class="tab-panel">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2>Персональные ежедневные дайджесты</h2>
+            <p class="muted">Готовые списки действий по ролям: ответственный, постановщик, соисполнитель и наблюдатель.</p>
+          </div>
+          <div class="digest-actions">
+            <button id="copyDigestBtn" class="button">Скопировать дайджест</button>
+            <button class="button" data-export="digest">Скачать CSV</button>
+          </div>
+        </div>
+
+        <div class="digest-toolbar">
+          <label>Сотрудник
+            <select id="digestPersonSelect"></select>
+          </label>
+          <label>Роль
+            <select id="digestRoleFilter">
+              <option value="">Все роли</option>
+              <option value="responsible">Ответственный</option>
+              <option value="author">Постановщик</option>
+              <option value="coExecutor">Соисполнитель</option>
+              <option value="observer">Наблюдатель</option>
+            </select>
+          </label>
+          <label>Состав дайджеста
+            <select id="digestScopeFilter">
+              <option value="urgent">Красная зона и сегодня</option>
+              <option value="red">Только красная зона</option>
+              <option value="all">Все пункты</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="digestSummary" class="summary-row"></div>
+        <div id="digestContent"></div>
+      </div>
+    </section>
+
     <section id="tab-dynamic" class="tab-panel">
       <div class="card">
         <h2>Динамика между выгрузками</h2>
@@ -167,6 +208,10 @@
           <li>Открой ссылку GitHub Pages и нажми <b>Обновить</b>.</li>
         </ol>
         <p class="muted">Задачи со статусом <b>Отложена</b>, проектные контейнеры и ежедневные служебные задачи исключаются из расчетов.</p>
+        <h3>Персональные дайджесты</h3>
+        <p>Раздел <b>Дайджесты</b> строит готовые сообщения по ролям из выгрузки: ответственный, постановщик, соисполнитель и наблюдатель.</p>
+        <p>Для ежедневной работы используй режим <b>Красная зона и сегодня</b>, затем нажимай <b>Скопировать дайджест</b> и отправляй текст сотруднику.</p>
+        <p class="muted">Наблюдателям показываются только критичные пункты, чтобы не создавать лишний шум.</p>
         <h3>Как часто делать выгрузки</h3>
         <p><b>Обычный режим:</b> 1 раз в рабочий день утром до 09:30.</p>
         <p><b>Активная проектная фаза:</b> 2 раза в день — утром и после обеда.</p>
