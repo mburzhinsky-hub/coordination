@@ -29,7 +29,10 @@ const settings = {
   stale7Days: 7,
   stale14Days: 14,
   dueSoonDays: 3,
-  longWaitingControlDays: 3,
+  waitingControlObserverDays: 3,
+  waitingControlRedDays: 5,
+  longWaitingControlDays: 5,
+  departmentHeadName: 'Дмитрий Храпугин',
   workload: {
     active: 1,
     overdue: 2.5,
@@ -42,7 +45,16 @@ const settings = {
   digest: {
     dueSoonDays: 3,
     staleDays: 14,
-    highRiskScore: 50
+    highRiskScore: 50,
+    observerOverdueDays: 3,
+    observerStaleDays: 14,
+    maxRedItems: 7,
+    maxCheckItems: 7,
+    maxTodayItems: 5,
+    maxSoonItems: 5,
+    maxHygieneItems: 5,
+    maxChangesItems: 5,
+    maxInfoItems: 4
   }
 };
 
@@ -81,15 +93,18 @@ const ROLE_META = {
   responsible: { label: 'Ответственный', color: 'blue', priority: 1 },
   author: { label: 'Постановщик', color: 'orange', priority: 2 },
   coExecutor: { label: 'Соисполнитель', color: 'yellow', priority: 3 },
-  observer: { label: 'Наблюдатель', color: 'gray', priority: 4 }
+  observer: { label: 'Наблюдатель', color: 'gray', priority: 4 },
+  departmentHead: { label: 'Руководитель отдела', color: 'red', priority: 5 }
 };
 
 const DIGEST_CATEGORY_META = {
-  red: { label: 'Красная зона', color: 'red', priority: 1 },
-  today: { label: 'Сегодня / требуется реакция', color: 'orange', priority: 2 },
-  soon: { label: 'Ближайшие 3 дня', color: 'yellow', priority: 3 },
-  hygiene: { label: 'Гигиена задач', color: 'gray', priority: 4 },
-  changes: { label: 'Изменения с прошлой выгрузки', color: 'blue', priority: 5 }
+  red: { label: 'Красная зона', color: 'red', priority: 1, limitKey: 'maxRedItems' },
+  check: { label: 'Нужно проверить / принять', color: 'blue', priority: 2, limitKey: 'maxCheckItems' },
+  today: { label: 'Сегодня / требуется реакция', color: 'orange', priority: 3, limitKey: 'maxTodayItems' },
+  soon: { label: 'Ближайшие 3 дня', color: 'yellow', priority: 4, limitKey: 'maxSoonItems' },
+  hygiene: { label: 'Гигиена задач', color: 'gray', priority: 5, limitKey: 'maxHygieneItems' },
+  changes: { label: 'Изменения с прошлой выгрузки', color: 'blue', priority: 6, limitKey: 'maxChangesItems' },
+  info: { label: 'Для сведения', color: 'gray', priority: 7, limitKey: 'maxInfoItems' }
 };
 
 const el = (id) => document.getElementById(id);
@@ -441,7 +456,9 @@ function normalizeTask(row, index, asOf, exportFile) {
   const stale7 = staleDays !== null && staleDays > settings.stale7Days;
   const stale14 = staleDays !== null && staleDays > settings.stale14Days;
   const waitingControlDays = isWaitingControl && staleDays !== null ? staleDays : 0;
-  const isLongWaitingControl = isWaitingControl && waitingControlDays >= settings.longWaitingControlDays;
+  const isObserverVisibleControl = isWaitingControl && waitingControlDays >= settings.waitingControlObserverDays;
+  const isRedWaitingControl = isWaitingControl && waitingControlDays >= settings.waitingControlRedDays;
+  const isLongWaitingControl = isRedWaitingControl;
   const noParent = !parentTitle && !parentId;
   const overdueDays = overdue ? Math.max(0, Math.ceil((asOf - deadline) / 86400000)) : 0;
   const controlEscalationOwners = unique([author, ...(observers || [])]).filter(Boolean);
@@ -451,7 +468,7 @@ function normalizeTask(row, index, asOf, exportFile) {
     id, title, status, responsible, author, creator, coExecutors, observers, parentTitle, parentId, project,
     deadline, created, changed, closed, priority, estimate, spent, planned,
     exportFile, exportDate: asOf,
-    isCompleted, isWaitingControl, isLongWaitingControl, isInProgress, isDeferred, isProjectContainer, isIgnoredDaily, ignoreForDashboard,
+    isCompleted, isWaitingControl, isObserverVisibleControl, isRedWaitingControl, isLongWaitingControl, isInProgress, isDeferred, isProjectContainer, isIgnoredDaily, ignoreForDashboard,
     noDeadline, overdue, overdueDays, dueToday, dueSoon, deadlineDeltaDays,
     lastActivity, staleDays, stale7, stale14, waitingControlDays, noParent,
     controlEscalationOwners, controlEscalationLabel
@@ -466,6 +483,8 @@ function normalizeTask(row, index, asOf, exportFile) {
   task.responsibleRiskColor = responsibleRisk.color;
   task.responsibleRiskLabel = responsibleRisk.label;
   task.controlShiftedFromResponsible = task.isLongWaitingControl;
+  task.ballOwnerLabel = getBallOwnerLabel(task);
+  task.digestSignalLabel = getDigestSignalLabel(task);
   task.recommendedAction = recommendAction(task);
   task.systemComment = buildSystemComment(task);
   return task;
@@ -477,6 +496,8 @@ function calculateRisk(task) {
   if (task.dueToday) score += 35;
   if (task.dueSoon && !task.dueToday) score += 25;
   if (task.isWaitingControl) score += 20;
+  if (task.isObserverVisibleControl) score += 10;
+  if (task.isLongWaitingControl) score += 35;
   if (task.noDeadline) score += 15;
   if (task.stale7) score += 10;
   if (task.stale14) score += 20;
@@ -504,19 +525,60 @@ function responsibleOwnsTaskRisk(task) {
 }
 
 function getTaskEscalationOwners(task) {
-  if (!shouldShiftControlToAuthor(task)) return task.responsible || 'Не указан';
-  return task.controlEscalationLabel || 'Постановщик / наблюдатели';
+  if (!task.isWaitingControl) return task.responsible || 'Не указан';
+  if (task.isObserverVisibleControl) return task.controlEscalationLabel || 'Постановщик / наблюдатели';
+  return task.author || 'Постановщик не указан';
 }
 
 function getTaskEscalationRoleLabel(task) {
-  if (!shouldShiftControlToAuthor(task)) return 'Ответственный';
-  return `Постановщик / наблюдатели · на контроле ${task.waitingControlDays || 0} дн.`;
+  if (!task.isWaitingControl) return 'Ответственный';
+  if (task.isLongWaitingControl) return `Постановщик / наблюдатели · на контроле ${task.waitingControlDays || 0} дн. · красная зона после ${settings.waitingControlRedDays} дн.`;
+  if (task.isObserverVisibleControl) return `Постановщик / наблюдатели · на контроле ${task.waitingControlDays || 0} дн. · подключить контроль`;
+  return `Постановщик · ждёт проверки ${task.waitingControlDays || 0} дн.`;
+}
+
+function getBallOwnerLabel(task) {
+  if (task.isWaitingControl) {
+    if (task.waitingControlDays >= settings.waitingControlRedDays) return 'Мяч у постановщика / наблюдателей, нужна эскалация';
+    if (task.waitingControlDays >= settings.waitingControlObserverDays) return 'Мяч у постановщика, наблюдатели подключаются к контролю';
+    return 'Мяч у постановщика: принять или вернуть результат';
+  }
+  if (task.overdue || task.dueToday || task.dueSoon || task.noDeadline || task.stale14) return `Мяч у исполнителя: ${task.responsible || 'не указан'}`;
+  return 'Без срочного владельца действия';
+}
+
+function getDigestSignalLabel(task) {
+  if (task.isWaitingControl) {
+    if (task.waitingControlDays >= settings.waitingControlRedDays) return `Контроль завис ${task.waitingControlDays} дн.`;
+    if (task.waitingControlDays >= settings.waitingControlObserverDays) return `На контроле ${task.waitingControlDays} дн.`;
+    return 'Ждёт проверки';
+  }
+  if (task.overdue) return `Просрочено ${task.overdueDays} дн.`;
+  if (task.dueToday) return 'Срок сегодня';
+  if (task.dueSoon) return `Срок скоро (${task.deadlineDeltaDays} дн.)`;
+  if (task.noDeadline) return 'Нет срока';
+  if (task.stale14) return `Нет активности ${task.staleDays} дн.`;
+  return 'Информационно';
+}
+
+function isDepartmentHeadName(person) {
+  return normalizePersonKey(person) === normalizePersonKey(settings.departmentHeadName);
+}
+
+function taskNeedsDepartmentHeadEscalation(task) {
+  return Boolean(
+    task.isLongWaitingControl
+    || (task.overdue && task.overdueDays >= 3)
+    || task.riskScore >= 80
+    || task.stale14
+    || (task.noDeadline && task.stale7)
+  );
 }
 
 function recommendAction(task) {
   if (task.isLongWaitingControl) return `Эскалировать постановщику / наблюдателям: задача на контроле ${task.waitingControlDays} дн., нужно принять или вернуть`;
+  if (task.isWaitingControl) return 'Постановщику принять результат или вернуть на доработку';
   if (task.overdue) return 'Запросить результат, блокер или новый срок';
-  if (task.isWaitingControl) return 'Проверить результат и закрыть или вернуть на доработку';
   if (task.noDeadline) return 'Назначить крайний срок';
   if (task.stale14) return 'Запросить актуальный статус';
   if (task.noParent) return 'Привязать к проекту / родительской задаче';
@@ -528,7 +590,9 @@ function recommendAction(task) {
 function buildSystemComment(task) {
   const parts = [];
   if (task.isLongWaitingControl) parts.push(`контроль завис ${task.waitingControlDays} дн.; красная зона перенесена на постановщика / наблюдателей`);
-  if (task.overdue) parts.push(`просрочено ${task.overdueDays} дн.`);
+  else if (task.isObserverVisibleControl) parts.push(`на контроле ${task.waitingControlDays} дн.; подключить наблюдателей`);
+  if (task.overdue && !task.isWaitingControl) parts.push(`просрочено ${task.overdueDays} дн.`);
+  else if (task.overdue) parts.push(`формально просрочено ${task.overdueDays} дн., но мяч у приемки`);
   if (task.noDeadline) parts.push('нет срока');
   if (task.stale14) parts.push(`нет активности ${task.staleDays} дн.`);
   if (task.noParent) parts.push('нет родителя');
@@ -600,7 +664,8 @@ function renderUploadReport() {
       ${reportMetricHtml('Новые просрочки', report.diff.newOverdue.length, null, 'Стали просроченными между срезами', report.diff.newOverdue.length ? 'red' : 'green')}
       ${reportMetricHtml('Просрочки сняты', report.diff.resolvedOverdue.length, null, 'Были просрочены, теперь нет', report.diff.resolvedOverdue.length ? 'green' : 'gray')}
       ${reportMetricHtml('Ждёт контроля', report.metrics.waitingControl, reportDelta(report, 'waitingControl'), 'Нужно принять или вернуть', report.metrics.waitingControl ? 'blue' : 'green')}
-      ${reportMetricHtml(`Контроль > ${settings.longWaitingControlDays} дн.`, report.metrics.longWaitingControl, reportDelta(report, 'longWaitingControl'), 'Эскалация постановщику', report.metrics.longWaitingControl ? 'red' : 'green')}
+      ${reportMetricHtml(`Контроль ${settings.waitingControlObserverDays}+ дн.`, report.metrics.observerControl, reportDelta(report, 'observerControl'), 'Подключить наблюдателей', report.metrics.observerControl ? 'blue' : 'green')}
+      ${reportMetricHtml(`Контроль ${settings.waitingControlRedDays}+ дн.`, report.metrics.longWaitingControl, reportDelta(report, 'longWaitingControl'), 'Красная зона приемки', report.metrics.longWaitingControl ? 'red' : 'green')}
       ${reportMetricHtml('Красный/оранжевый риск', report.metrics.highRisk, reportDelta(report, 'highRisk'), 'Задачи с риском 50+', report.metrics.highRisk ? 'orange' : 'green')}
       ${reportMetricHtml('Без срока', report.metrics.noDeadline, reportDelta(report, 'noDeadline'), 'Нужно назначить дедлайн', report.metrics.noDeadline ? 'gray' : 'green')}
       ${reportMetricHtml('Средний риск', report.metrics.avgRisk, reportDelta(report, 'avgRisk'), 'Средний индекс риска', riskColor(report.metrics.avgRisk), 'neutral')}
@@ -617,6 +682,7 @@ function renderUploadReport() {
           ['Риск', t => badge(t.riskLabel, t.riskColor) + `<div class="small">${t.riskScore}</div>`],
           ['Задача', t => `<div class="task-title">${escapeHtml(t.title)}</div>`],
           ['Кому писать', t => `${escapeHtml(getTaskEscalationOwners(t))}<div class="small">${escapeHtml(getTaskEscalationRoleLabel(t))}</div>`],
+          ['Кому мяч', t => `<div class="action">${escapeHtml(t.ballOwnerLabel)}</div>`],
           ['Ответственный', t => escapeHtml(t.responsible)],
           ['Срок', t => formatDateTime(t.deadline)],
           ['Действие', t => escapeHtml(t.recommendedAction)]
@@ -696,6 +762,7 @@ function buildMetricSnapshot(tasks) {
     dueToday: count(tasks, t => t.dueToday),
     dueSoon: count(tasks, t => t.dueSoon),
     waitingControl: count(tasks, t => t.isWaitingControl),
+    observerControl: count(tasks, t => t.isObserverVisibleControl),
     longWaitingControl: count(tasks, t => t.isLongWaitingControl),
     noDeadline: count(tasks, t => t.noDeadline),
     stale14: count(tasks, t => t.stale14),
@@ -820,7 +887,8 @@ function buildReportInsights(report) {
     insights.push({ color: worstProject.overdue ? 'red' : 'orange', text: `Главная зона внимания по проектам: ${worstProject.project} — просрочек ${worstProject.overdue}, риск ${worstProject.riskScore}.` });
   }
 
-  if (m.longWaitingControl) insights.push({ color: 'red', text: `Задач, зависших на контроле дольше ${settings.longWaitingControlDays} дн.: ${m.longWaitingControl}. Красная зона перенесена с исполнителей на постановщиков / наблюдателей.` });
+  if (m.observerControl) insights.push({ color: 'blue', text: `Задач на контроле ${settings.waitingControlObserverDays}+ дн.: ${m.observerControl}. Наблюдатели подключаются только после этого порога, чтобы не создавать шум.` });
+  if (m.longWaitingControl) insights.push({ color: 'red', text: `Задач, зависших на контроле ${settings.waitingControlRedDays}+ дн.: ${m.longWaitingControl}. Красная зона перенесена с исполнителей на постановщиков / наблюдателей.` });
   if (m.noDeadline) insights.push({ color: 'gray', text: `Задач без срока: ${m.noDeadline}. Это снижает управляемость и искажает прогноз загрузки.` });
   if (m.stale14) insights.push({ color: 'orange', text: `Зависших без активности больше 14 дней: ${m.stale14}. Нужен запрос актуального статуса.` });
 
@@ -923,7 +991,8 @@ function renderKpis(tasks) {
     ['Срок сегодня', count(tasks, t => t.dueToday), 'Проверить готовность', 'orange'],
     ['Ближайшие 3 дня', count(tasks, t => t.dueSoon), 'Профилактика срыва', 'yellow'],
     ['Ждёт контроля', count(tasks, t => t.isWaitingControl), 'Принять / вернуть', 'blue'],
-    [`Контроль > ${settings.longWaitingControlDays} дн.`, count(tasks, t => t.isLongWaitingControl), 'Эскалация постановщику', 'red'],
+    [`Контроль ${settings.waitingControlObserverDays}+ дн.`, count(tasks, t => t.isObserverVisibleControl), 'Подключить наблюдателей', 'blue'],
+    [`Контроль ${settings.waitingControlRedDays}+ дн.`, count(tasks, t => t.isLongWaitingControl), 'Красная зона приемки', 'red'],
     ['Без срока', count(tasks, t => t.noDeadline), 'Нужно назначить дедлайн', 'gray'],
     ['Нет активности > 14 дн.', count(tasks, t => t.stale14), 'Зависшие задачи', 'gray'],
     ['Без родителя', count(tasks, t => t.noParent), 'Нет проектной привязки', 'gray'],
@@ -942,6 +1011,7 @@ function renderPushList(tasks) {
     ['Риск', t => badge(t.riskLabel, t.riskColor) + `<div class="small">${t.riskScore}</div>`],
     ['Действие', t => `<div class="action">${escapeHtml(t.recommendedAction)}</div>`],
     ['Кому писать', t => `${escapeHtml(getTaskEscalationOwners(t))}<div class="small">${escapeHtml(getTaskEscalationRoleLabel(t))}</div>`],
+    ['Кому мяч', t => `<div class="action">${escapeHtml(t.ballOwnerLabel)}</div>`],
     ['Ответственный', t => escapeHtml(t.responsible)],
     ['Проект', t => `<div class="project-name">${escapeHtml(t.project)}</div>`],
     ['Задача', t => `<div class="task-title">${escapeHtml(t.title)}</div><div class="small">ID: ${escapeHtml(t.id)}</div>`],
@@ -1100,11 +1170,12 @@ function renderControl(tasks) {
     ['Задача', t => `<div class="task-title">${escapeHtml(t.title)}</div>`],
     ['Проект', t => `<div class="project-name">${escapeHtml(t.project)}</div>`],
     ['Кому писать', t => `${escapeHtml(getTaskEscalationOwners(t))}<div class="small">${escapeHtml(getTaskEscalationRoleLabel(t))}</div>`],
+    ['Кому мяч', t => `<div class="action">${escapeHtml(t.ballOwnerLabel)}</div>`],
     ['Ответственный', t => `${escapeHtml(t.responsible)}${t.isLongWaitingControl ? '<div class="small">снято с красной зоны исполнителя</div>' : ''}`],
     ['Постановщик', t => escapeHtml(t.author)],
     ['Срок', t => formatDateTime(t.deadline)],
     ['Последнее изменение', t => formatDateTime(t.changed)],
-    ['Действие', t => t.isLongWaitingControl ? 'Постановщику / наблюдателям принять или вернуть результат' : 'Проверить результат и закрыть или вернуть на доработку']
+    ['Действие', t => t.isLongWaitingControl ? 'Постановщику / наблюдателям принять или вернуть результат' : (t.isObserverVisibleControl ? 'Постановщику проверить; наблюдателям подключиться к контролю' : 'Постановщику проверить результат')]
   ]);
 }
 
@@ -1176,7 +1247,7 @@ function getCurrentDigestContext() {
   const rawPersonItems = entries.filter(item => item.person === state.digest.person);
   const personItems = applyDigestFilters(rawPersonItems);
   const selectedIndex = index.find(row => row.person === state.digest.person) || index[0] || {
-    person: state.digest.person || '', total: 0, red: 0, today: 0, soon: 0, hygiene: 0, changes: 0, rolesLabel: '', roleCount: 0
+    person: state.digest.person || '', total: 0, red: 0, check: 0, today: 0, soon: 0, hygiene: 0, changes: 0, info: 0, rolesLabel: '', roleCount: 0
   };
   return { entries, index, people, rawPersonItems, personItems, selectedIndex };
 }
@@ -1212,6 +1283,7 @@ function renderDigests() {
       `Сотрудников в дайджестах: ${index.length}`,
       `Выбран: ${state.digest.person}`,
       `Красная зона: ${selectedIndex.red}`,
+      `Нужно проверить: ${selectedIndex.check || 0}`,
       `Сегодня: ${selectedIndex.today}`,
       `Все пункты: ${selectedIndex.total}`,
       `Формат: ${formatLabel}`
@@ -1294,7 +1366,7 @@ function renderDigestPersonKpis(selectedIndex, rawItems, filteredItems) {
   return `
     <div class="digest-person-kpis">
       ${kpiHtml('Красная зона', selectedIndex.red, 'первый приоритет для отправки', selectedIndex.red ? 'red' : 'green')}
-      ${kpiHtml('Сегодня / реакция', selectedIndex.today, 'дедлайны и контроль', selectedIndex.today ? 'orange' : 'green')}
+      ${kpiHtml('Нужно проверить', selectedIndex.check || 0, `контроль с ${settings.waitingControlObserverDays} дн., красная зона с ${settings.waitingControlRedDays} дн.`, selectedIndex.check ? 'blue' : 'green')}
       ${kpiHtml('В текущем фильтре', filteredItems.length, getDigestScopeLabel(state.digest.scope), filteredItems.length ? 'blue' : 'green')}
       ${kpiHtml('Роли сотрудника', selectedIndex.roleCount, roleSummary, 'gray')}
     </div>
@@ -1305,7 +1377,7 @@ function renderDigestPeopleCards(index) {
   if (!index.length) return '<div class="status-box">Нет сотрудников для дайджеста.</div>';
   return index.map(row => {
     const active = row.person === state.digest.person ? ' active' : '';
-    const color = row.red ? 'red' : row.today ? 'orange' : row.soon ? 'yellow' : 'blue';
+    const color = row.red ? 'red' : row.check ? 'blue' : row.today ? 'orange' : row.soon ? 'yellow' : 'blue';
     return `
       <button class="digest-person-card${active}" data-digest-person="${escapeAttr(row.person)}" type="button">
         <span class="digest-person-main">
@@ -1314,6 +1386,7 @@ function renderDigestPeopleCards(index) {
         </span>
         <span class="digest-person-counters">
           ${badge(`К ${row.red}`, row.red ? 'red' : 'green')}
+          ${badge(`П ${row.check || 0}`, row.check ? 'blue' : 'green')}
           ${badge(`С ${row.today}`, row.today ? 'orange' : 'green')}
           ${badge(`Всего ${row.total}`, color)}
         </span>
@@ -1331,20 +1404,29 @@ function renderDigestBoard(items) {
       ${categories.map(category => {
         const meta = DIGEST_CATEGORY_META[category];
         const categoryItems = items.filter(item => item.category === category).sort(compareDigestItems);
+        const limit = getDigestCategoryLimit(category);
+        const visibleItems = categoryItems.slice(0, limit);
+        const hiddenCount = Math.max(0, categoryItems.length - visibleItems.length);
         return `
           <div class="digest-board-section">
             <div class="digest-board-title">
               ${badge(meta.label, meta.color)}
-              <span class="small">${categoryItems.length} пунктов</span>
+              <span class="small">${categoryItems.length} пунктов · показано ${visibleItems.length}</span>
             </div>
             <div class="digest-card-stack">
-              ${categoryItems.map(item => renderDigestTaskCard(item)).join('')}
+              ${visibleItems.map(item => renderDigestTaskCard(item)).join('')}
+              ${hiddenCount ? `<div class="status-box">Еще ${hiddenCount} пунктов скрыты, чтобы не перегружать дайджест. Смотри CSV или режим “Все пункты”.</div>` : ''}
             </div>
           </div>
         `;
       }).join('')}
     </div>
   `;
+}
+
+function getDigestCategoryLimit(category) {
+  const key = DIGEST_CATEGORY_META[category]?.limitKey;
+  return key ? (settings.digest[key] || 5) : 5;
 }
 
 function renderDigestTaskCard(item) {
@@ -1369,7 +1451,7 @@ function renderDigestTaskCard(item) {
         <div><span>Статус</span><b>${escapeHtml(task.status || 'не указан')}</b></div>
         <div><span>Срок</span><b>${escapeHtml(deadline)}</b></div>
         <div><span>Риск</span><b>${escapeHtml(task.riskLabel)} · ${escapeHtml(String(task.riskScore))}</b></div>
-        <div><span>Активность</span><b>${escapeHtml(activity)}</b></div>
+        <div><span>Мяч</span><b>${escapeHtml(item.ballOwner || task.ballOwnerLabel || '')}</b></div>
       </div>
       <div class="digest-task-flags">
         ${item.flags.map(flag => `<span>${escapeHtml(flag)}</span>`).join('')}
@@ -1379,7 +1461,7 @@ function renderDigestTaskCard(item) {
         <b>${escapeHtml(item.action)}</b>
       </div>
       <div class="digest-task-footer">
-        <span class="small">Ответственный: ${escapeHtml(task.responsible || 'не указан')} · Постановщик: ${escapeHtml(task.author || 'не указан')}</span>
+        <span class="small">Ответственный: ${escapeHtml(task.responsible || 'не указан')} · Постановщик: ${escapeHtml(task.author || 'не указан')} · Активность: ${escapeHtml(activity)}</span>
         <button class="button button-mini button-light" type="button" data-copy-digest-task="${escapeAttr(taskKey)}">Скопировать задачу</button>
       </div>
     </article>
@@ -1415,7 +1497,8 @@ function buildDigestMiniReportModel(person, rawItems, filteredItems, selectedInd
   const roleGroups = groupBy(filteredItems, item => item.roleLabel);
   const roleSummary = Object.entries(roleGroups).map(([role, rows]) => `${role}: ${rows.length}`).join(' · ') || 'Нет активных ролей';
   const overdueCount = count(filteredItems, item => item.task.overdue);
-  const todayCount = count(filteredItems, item => item.task.dueToday || item.task.isWaitingControl);
+  const checkCount = count(filteredItems, item => item.category === 'check');
+  const todayCount = count(filteredItems, item => item.category === 'today');
   const waitingControlCount = count(filteredItems, item => item.task.isWaitingControl);
   const noDeadlineCount = count(filteredItems, item => item.task.noDeadline);
   const highRiskCount = count(filteredItems, item => item.task.riskScore >= settings.digest.highRiskScore);
@@ -1424,15 +1507,16 @@ function buildDigestMiniReportModel(person, rawItems, filteredItems, selectedInd
     { label: 'Фокус отчета', value: scopeLabel, hint: roleLabel },
     { label: 'Проектов', value: String(projects.length), hint: projects.slice(0, 3).join(', ') || 'Нет проектов' },
     { label: 'Роли', value: String(selectedIndex.roleCount || Object.keys(roleGroups).length || 0), hint: roleSummary },
-    { label: 'Ждет контроля', value: String(waitingControlCount), hint: waitingControlCount ? 'Нужна реакция постановщика / исполнителя' : 'Нет зависаний на контроле' },
+    { label: 'Нужно проверить', value: String(checkCount), hint: checkCount ? `Контроль с ${settings.waitingControlObserverDays} дн.` : 'Нет задач на проверку' },
     { label: 'Без срока', value: String(noDeadlineCount), hint: noDeadlineCount ? 'Назначить крайний срок' : 'Гигиена в норме' },
     { label: 'Высокий риск', value: String(highRiskCount), hint: highRiskCount ? 'Нужны приоритет и эскалация' : 'Критичного риска нет' }
   ];
 
   const insights = [];
   if (selectedIndex.red) insights.push({ color: 'red', text: `В красной зоне ${selectedIndex.red} пунктов. Их лучше отправлять в первую очередь.` });
+  if (selectedIndex.check) insights.push({ color: 'blue', text: `Нужно проверить ${selectedIndex.check} пунктов. Наблюдатели подключаются к контролю с ${settings.waitingControlObserverDays} дня, красная зона — с ${settings.waitingControlRedDays} дней.` });
   if (todayCount) insights.push({ color: 'orange', text: `Есть ${todayCount} пунктов на сегодня или на немедленную реакцию.` });
-  if (waitingControlCount) insights.push({ color: 'blue', text: `Задач в статусе “Ждёт контроля”: ${waitingControlCount}. Есть риск зависания без решения.` });
+  if (waitingControlCount) insights.push({ color: 'blue', text: `Задач в статусе “Ждёт контроля”: ${waitingControlCount}. У исполнителя это не красная зона; мяч у проверяющего.` });
   if (noDeadlineCount) insights.push({ color: 'gray', text: `Пунктов без срока: ${noDeadlineCount}. Их стоит датировать, иначе задача плохо управляется.` });
   if (staleCount) insights.push({ color: 'yellow', text: `Есть ${staleCount} задач без активности более ${settings.digest.staleDays} дней.` });
   if (!insights.length) insights.push({ color: 'green', text: 'По выбранному фильтру критичных проблем нет. Можно использовать отчет как подтверждение стабильной ситуации.' });
@@ -1448,7 +1532,7 @@ function buildDigestMiniReportModel(person, rawItems, filteredItems, selectedInd
         color: meta.color,
         count: items.length,
         items,
-        limit: category === 'red' || category === 'today' ? 5 : 4
+        limit: getDigestCategoryLimit(category)
       };
     });
 
@@ -1462,12 +1546,13 @@ function buildDigestMiniReportModel(person, rawItems, filteredItems, selectedInd
     roleSummary,
     selectedIndex,
     filteredTotal: filteredItems.length,
-    urgentCount: (selectedIndex.red || 0) + (selectedIndex.today || 0),
+    urgentCount: (selectedIndex.red || 0) + (selectedIndex.check || 0) + (selectedIndex.today || 0),
     summaryStats,
     insights,
     sections,
     counts: {
       overdue: overdueCount,
+      check: checkCount,
       today: todayCount,
       noDeadline: noDeadlineCount,
       waitingControl: waitingControlCount,
@@ -1480,7 +1565,7 @@ function buildDigestMiniReportModel(person, rawItems, filteredItems, selectedInd
 function renderDigestMiniReportMarkup(model) {
   const kpis = [
     { label: 'Красная зона', value: model.selectedIndex.red, hint: 'Пишем в первую очередь', color: model.selectedIndex.red ? 'red' : 'green' },
-    { label: 'Сегодня / реакция', value: model.selectedIndex.today, hint: 'Дедлайны и контроль', color: model.selectedIndex.today ? 'orange' : 'green' },
+    { label: 'Нужно проверить', value: model.selectedIndex.check || 0, hint: `Контроль с ${settings.waitingControlObserverDays} дн.`, color: model.selectedIndex.check ? 'blue' : 'green' },
     { label: 'В отчете', value: model.filteredTotal, hint: model.scopeLabel, color: model.filteredTotal ? 'blue' : 'green' },
     { label: 'Проекты', value: model.projects.length, hint: model.projects.slice(0, 2).join(', ') || 'Нет проектов', color: 'gray' },
     { label: 'Высокий риск', value: model.counts.highRisk, hint: model.counts.highRisk ? 'Нужен приоритет' : 'Критичного риска нет', color: model.counts.highRisk ? 'red' : 'green' }
@@ -1508,7 +1593,7 @@ function renderDigestMiniReportMarkup(model) {
           </div>
           <div class="mini-report-score">
             <strong>${escapeHtml(String(model.urgentCount))}</strong>
-            <span>критично / сегодня</span>
+            <span>критично / проверить / сегодня</span>
           </div>
         </div>
 
@@ -1590,6 +1675,7 @@ function renderMiniReportItem(item) {
         <div>${badge(item.roleLabel, ROLE_META[item.role]?.color || 'gray')}</div>
       </div>
       <div class="mini-report-item-reason"><b>Почему в отчете:</b> ${escapeHtml(item.flags.join('; ') || 'требует внимания')}</div>
+      <div class="mini-report-item-reason"><b>Кому сейчас мяч:</b> ${escapeHtml(item.ballOwner || task.ballOwnerLabel || 'не определено')}</div>
       <div class="mini-report-item-action"><b>Что сделать:</b> ${escapeHtml(item.action)} · Последняя активность: ${escapeHtml(activity)}</div>
     </article>
   `;
@@ -1736,7 +1822,7 @@ function downloadHtmlFile(html, fileName) {
 function applyDigestFilters(items) {
   let rows = [...items];
   if (state.digest.role) rows = rows.filter(item => item.role === state.digest.role);
-  if (state.digest.scope === 'urgent') rows = rows.filter(item => item.category === 'red' || item.category === 'today');
+  if (state.digest.scope === 'urgent') rows = rows.filter(item => ['red', 'check', 'today'].includes(item.category));
   if (state.digest.scope === 'red') rows = rows.filter(item => item.category === 'red');
   return rows.sort(compareDigestItems);
 }
@@ -1747,10 +1833,18 @@ function buildDigestRoleEntries(tasks) {
 
   tasks.forEach(task => {
     const used = new Set();
+    const directNames = new Set();
     const add = (person, role) => {
       const name = cleanText(person);
-      const key = `${normalizePersonKey(name)}|${role}`;
-      if (!name || /^не указан$/i.test(name) || used.has(key)) return;
+      if (!name || /^не указан$/i.test(name)) return;
+
+      if (role === 'observer' && isDepartmentHeadName(name)) return;
+
+      const personKey = normalizePersonKey(name);
+      directNames.add(personKey);
+      const key = `${personKey}|${role}`;
+      if (used.has(key)) return;
+
       const item = buildDigestItem(name, role, task, changesByTaskId[String(task.id || task.title)] || []);
       used.add(key);
       if (item) entries.push(item);
@@ -1760,9 +1854,29 @@ function buildDigestRoleEntries(tasks) {
     add(task.author, 'author');
     (task.coExecutors || []).forEach(person => add(person, 'coExecutor'));
     (task.observers || []).forEach(person => add(person, 'observer'));
+
+    if (taskNeedsDepartmentHeadEscalation(task) && !directNames.has(normalizePersonKey(settings.departmentHeadName))) {
+      const item = buildDigestItem(settings.departmentHeadName, 'departmentHead', task, changesByTaskId[String(task.id || task.title)] || []);
+      if (item) entries.push(item);
+    }
   });
 
-  return entries.sort(compareDigestItems);
+  return dedupeDigestEntries(entries).sort(compareDigestItems);
+}
+
+function dedupeDigestEntries(entries) {
+  const best = new Map();
+  entries.forEach(item => {
+    const key = `${normalizePersonKey(item.person)}|${String(item.task.id || item.task.title)}`;
+    const current = best.get(key);
+    if (!current || compareDigestItems(item, current) < 0) {
+      best.set(key, item);
+    } else if (current) {
+      current.alternateRoles = unique([...(current.alternateRoles || []), item.roleLabel]);
+      current.flags = unique([...(current.flags || []), ...(item.flags || [])]);
+    }
+  });
+  return [...best.values()];
 }
 
 function buildDigestItem(person, role, task, changes) {
@@ -1770,33 +1884,54 @@ function buildDigestItem(person, role, task, changes) {
   const addFlag = (text, category, color, priority) => flags.push({ text, category, color, priority });
   const isObserver = role === 'observer';
   const isAuthor = role === 'author';
+  const isDepartmentHead = role === 'departmentHead';
   const isExecutorSide = role === 'responsible' || role === 'coExecutor';
   const isControlSide = isAuthor || isObserver;
-  const controlShifted = task.isLongWaitingControl;
-  const effectiveRiskScore = controlShifted && isExecutorSide ? (task.responsibleRiskScore ?? 0) : task.riskScore;
-  const highRisk = effectiveRiskScore >= settings.digest.highRiskScore;
-  const redRisk = effectiveRiskScore >= 80;
+  const controlRed = task.isWaitingControl && task.waitingControlDays >= settings.waitingControlRedDays;
+  const controlObserverVisible = task.isWaitingControl && task.waitingControlDays >= settings.waitingControlObserverDays;
+  const effectiveRiskScore = controlRed && isExecutorSide ? (task.responsibleRiskScore ?? 0) : task.riskScore;
   const deadlineDays = task.deadlineDeltaDays;
 
-  if (controlShifted && isControlSide) {
-    addFlag(`Контроль завис ${task.waitingControlDays} дн.`, 'red', 'red', 1);
+  if (isDepartmentHead) {
+    if (controlRed) addFlag(`Эскалация: контроль завис ${task.waitingControlDays} дн.`, 'red', 'red', 1);
+    if (task.overdue && task.overdueDays >= 3) addFlag(`Эскалация: просрочено ${task.overdueDays} дн.`, 'red', 'red', 2);
+    if (task.riskScore >= 80) addFlag(`Эскалация: красный риск ${task.riskScore}`, 'red', 'red', 3);
+    if (task.stale14) addFlag(`Эскалация: нет активности ${task.staleDays} дн.`, 'red', 'orange', 4);
+    if (task.noDeadline && task.stale7) addFlag('Эскалация: задача без срока и без движения', 'red', 'gray', 5);
+  } else if (isExecutorSide) {
+    if (task.isWaitingControl) {
+      addFlag(`Передано на контроль ${task.waitingControlDays || 0} дн.`, 'info', 'gray', 90);
+    } else {
+      if (task.overdue) addFlag(`Просрочено ${task.overdueDays} дн.`, 'red', 'red', 1);
+      if (effectiveRiskScore >= 80) addFlag(`Красный риск ${effectiveRiskScore}`, 'red', 'red', 2);
+      else if (effectiveRiskScore >= settings.digest.highRiskScore) addFlag(`Высокий риск ${effectiveRiskScore}`, 'red', 'orange', 3);
+      if (task.dueToday) addFlag('Срок сегодня', 'today', 'orange', 4);
+      if (task.dueSoon && !task.dueToday && !task.overdue) addFlag(`Срок в ближайшие ${settings.digest.dueSoonDays} дн.${deadlineDays !== null ? ` (${deadlineDays} дн.)` : ''}`, 'soon', 'yellow', 6);
+      if (task.noDeadline) addFlag('Нет крайнего срока', 'hygiene', 'gray', 7);
+      if (task.staleDays !== null && task.staleDays > settings.digest.staleDays) addFlag(`Нет активности ${task.staleDays} дн.`, 'hygiene', 'gray', 8);
+    }
+  } else if (isAuthor) {
+    if (task.isWaitingControl) {
+      if (controlRed) addFlag(`Контроль завис ${task.waitingControlDays} дн.`, 'red', 'red', 1);
+      else addFlag(`Нужно проверить: на контроле ${task.waitingControlDays || 0} дн.`, 'check', 'blue', 2);
+    }
+    if (!task.isWaitingControl && task.overdue) addFlag(`У исполнителя просрочка ${task.overdueDays} дн.`, task.overdueDays >= 3 ? 'red' : 'today', task.overdueDays >= 3 ? 'red' : 'orange', 3);
+    if (!task.isWaitingControl && task.dueToday) addFlag('Срок сегодня у исполнителя', 'today', 'orange', 4);
+    if (!task.isWaitingControl && task.dueSoon && !task.dueToday && !task.overdue) addFlag(`Скоро срок у исполнителя (${deadlineDays} дн.)`, 'soon', 'yellow', 6);
+    if (!task.isWaitingControl && task.noDeadline) addFlag('Поставленная задача без срока', 'hygiene', 'gray', 7);
+    if (!task.isWaitingControl && task.staleDays !== null && task.staleDays > settings.digest.staleDays) addFlag(`Нет активности ${task.staleDays} дн.`, 'hygiene', 'gray', 8);
+  } else if (isObserver) {
+    if (task.isWaitingControl) {
+      if (controlRed) addFlag(`Контроль завис ${task.waitingControlDays} дн.`, 'red', 'red', 1);
+      else if (controlObserverVisible) addFlag(`На контроле ${task.waitingControlDays} дн. — подключиться`, 'check', 'blue', 3);
+    }
+    if (!task.isWaitingControl && task.overdue && task.overdueDays >= settings.digest.observerOverdueDays) addFlag(`Долгая просрочка ${task.overdueDays} дн.`, 'red', 'red', 4);
+    if (task.riskScore >= 80) addFlag(`Красный риск ${task.riskScore}`, 'red', 'red', 5);
+    if (task.staleDays !== null && task.staleDays > settings.digest.observerStaleDays) addFlag(`Нет активности ${task.staleDays} дн.`, 'hygiene', 'gray', 8);
   }
 
-  if (!controlShifted || !isExecutorSide) {
-    if (task.overdue) addFlag(`Просрочено ${task.overdueDays} дн.`, 'red', 'red', 1);
-    if (redRisk) addFlag(`Красный риск ${effectiveRiskScore}`, 'red', 'red', 2);
-    else if (highRisk && !isObserver) addFlag(`Высокий риск ${effectiveRiskScore}`, 'red', 'orange', 3);
-  }
-
-  if (!isObserver && !controlShifted && task.dueToday) addFlag('Срок сегодня', 'today', 'orange', 4);
-  if ((isAuthor || role === 'responsible') && task.isWaitingControl && (!controlShifted || isAuthor)) addFlag('Ждёт контроля', controlShifted && isAuthor ? 'red' : 'today', controlShifted && isAuthor ? 'red' : 'blue', 5);
-  if (isObserver && task.isWaitingControl && (highRisk || controlShifted)) addFlag(controlShifted ? `Задача зависла на контроле ${task.waitingControlDays} дн.` : 'Критичная задача ждёт контроля', controlShifted ? 'red' : 'today', controlShifted ? 'red' : 'blue', 5);
-  if (!isObserver && !controlShifted && task.dueSoon && !task.dueToday && !task.overdue) addFlag(`Срок в ближайшие ${settings.digest.dueSoonDays} дн.${deadlineDays !== null ? ` (${deadlineDays} дн.)` : ''}`, 'soon', 'yellow', 6);
-  if (!isObserver && !controlShifted && task.noDeadline) addFlag('Нет крайнего срока', 'hygiene', 'gray', 7);
-  if (!isObserver && !controlShifted && task.staleDays !== null && task.staleDays > settings.digest.staleDays) addFlag(`Нет активности ${task.staleDays} дн.`, 'hygiene', 'gray', 8);
-
-  if (!isObserver && changes.length && (!controlShifted || !isExecutorSide)) {
-    changes.slice(0, 3).forEach(change => addFlag(change.text, 'changes', change.color || 'blue', 9));
+  if (!isObserver && !isDepartmentHead && changes.length && !(task.isWaitingControl && isExecutorSide)) {
+    changes.slice(0, 2).forEach(change => addFlag(change.text, 'changes', change.color || 'blue', 9));
   }
 
   if (!flags.length) return null;
@@ -1814,25 +1949,43 @@ function buildDigestItem(person, role, task, changes) {
     priorityLabel: primary.text,
     flags: unique(flags.map(flag => flag.text)),
     action: buildDigestAction(task, role, flags),
+    ballOwner: buildDigestBallOwner(task, role),
     task
   };
+}
+
+function buildDigestBallOwner(task, role) {
+  if (role === 'departmentHead') return 'Мяч у руководителя: снять системное зависание / эскалировать';
+  if (task.isWaitingControl) {
+    if (role === 'responsible' || role === 'coExecutor') return 'Мяч не у исполнителя: результат передан на контроль';
+    if (role === 'author') return 'Мяч у постановщика: принять или вернуть результат';
+    if (role === 'observer') {
+      if (task.waitingControlDays >= settings.waitingControlRedDays) return 'Мяч у постановщика и наблюдателей: нужна эскалация';
+      return 'Мяч у постановщика; наблюдатель подключается, если приемка зависает';
+    }
+  }
+  if (role === 'author') return `Мяч у постановщика: проконтролировать ${task.responsible || 'исполнителя'}`;
+  if (role === 'observer') return 'Мяч у наблюдателя: держать на контроле только риск / зависание';
+  return `Мяч у исполнителя: ${task.responsible || 'не указан'}`;
 }
 
 function buildDigestAction(task, role, flags) {
   const flagText = flags.map(flag => flag.text).join(' ').toLowerCase();
 
-  if (task.isLongWaitingControl && (role === 'author' || role === 'observer')) {
-    return `Принять результат или вернуть на доработку: задача на контроле ${task.waitingControlDays} дн.`;
+  if (role === 'departmentHead') {
+    if (task.isLongWaitingControl) return `Назначить ответственного за приемку: задача на контроле ${task.waitingControlDays} дн.`;
+    if (task.overdue) return 'Решить, кто снимает просрочку: исполнитель, постановщик или проектный ответственный.';
+    if (task.stale14) return 'Попросить руководителя проекта подтвердить актуальность и следующий шаг.';
+    return 'Проверить, нужна ли управленческая эскалация.';
   }
 
-  if (task.isLongWaitingControl && (role === 'responsible' || role === 'coExecutor')) {
-    return 'Информационно: красная зона по зависшему контролю перенесена на постановщика / наблюдателей.';
+  if (task.isWaitingControl && (role === 'responsible' || role === 'coExecutor')) {
+    return 'Информационно: задача передана на контроль, красная зона по приемке не на исполнителе.';
   }
 
   if (role === 'responsible') {
     if (task.overdue) return 'Дать результат, блокер или новый реалистичный срок. Обновить комментарий в задаче.';
     if (task.dueToday) return 'До конца дня подтвердить готовность или заранее обозначить риск.';
-    if (task.isWaitingControl) return 'Проверить, что результат передан на контроль и есть все материалы для приемки.';
     if (task.noDeadline) return 'Согласовать и поставить крайний срок.';
     if (task.stale14) return 'Обновить статус и следующий шаг в задаче.';
     if (flagText.includes('новая задача')) return 'Принять задачу в работу: срок, следующий шаг, блокеры.';
@@ -1856,8 +2009,11 @@ function buildDigestAction(task, role, flags) {
   }
 
   if (role === 'observer') {
+    if (task.isWaitingControl) {
+      if (task.waitingControlDays >= settings.waitingControlRedDays) return 'Добиться решения по приемке: принять, вернуть или эскалировать постановщику.';
+      return 'Проверить, кто должен принять результат, и не дать задаче зависнуть до красной зоны.';
+    }
     if (task.overdue || task.riskScore >= 80) return 'Посмотреть риск по задаче и при необходимости подключиться к эскалации.';
-    if (task.isWaitingControl) return 'Проконтролировать, что результат будет принят или возвращен без зависания.';
     return 'Держать задачу на контроле как наблюдатель.';
   }
 
@@ -1891,14 +2047,16 @@ function buildDigestIndexFromEntries(entries) {
       person,
       total: rows.length,
       red: count(rows, row => row.category === 'red'),
+      check: count(rows, row => row.category === 'check'),
       today: count(rows, row => row.category === 'today'),
       soon: count(rows, row => row.category === 'soon'),
       hygiene: count(rows, row => row.category === 'hygiene'),
       changes: count(rows, row => row.category === 'changes'),
+      info: count(rows, row => row.category === 'info'),
       rolesLabel: roles.join(', '),
       roleCount: roles.length
     };
-  }).sort((a, b) => b.red - a.red || b.today - a.today || b.total - a.total || a.person.localeCompare(b.person));
+  }).sort((a, b) => b.red - a.red || (b.check || 0) - (a.check || 0) || b.today - a.today || b.total - a.total || a.person.localeCompare(b.person));
 }
 
 function compareDigestItems(a, b) {
@@ -1917,7 +2075,7 @@ function compareDigestItems(a, b) {
 function getDigestScopeLabel(scope) {
   if (scope === 'all') return 'все пункты дайджеста';
   if (scope === 'red') return 'только красная зона';
-  return 'красная зона и задачи на сегодня';
+  return 'красная зона, проверка и задачи на сегодня';
 }
 
 function getDigestFormatLabel(format) {
@@ -1969,7 +2127,7 @@ function formatDigestTextLine(item, isBrief) {
   const task = item.task;
   const deadline = task.deadline ? formatDateTime(task.deadline) : 'срок не указан';
   if (isBrief) {
-    return `— [${task.id}] ${task.title} — ${item.priorityLabel}; ${deadline}. Действие: ${item.action}`;
+    return `— [${task.id}] ${task.title} — ${item.priorityLabel}; ${deadline}. Мяч: ${item.ballOwner || task.ballOwnerLabel || 'не определено'}. Действие: ${item.action}`;
   }
   const project = task.project || 'Без проекта';
   return [
@@ -1979,6 +2137,7 @@ function formatDigestTextLine(item, isBrief) {
     `  Статус: ${task.status || 'не указан'}`,
     `  Срок: ${deadline}`,
     `  Почему попало: ${item.flags.join('; ')}`,
+    `  Кому сейчас мяч: ${item.ballOwner || task.ballOwnerLabel || 'не определено'}`,
     `  Что сделать: ${item.action}`
   ].join('\n');
 }
@@ -2006,6 +2165,7 @@ function buildDigestTaskForwardText(item) {
     `Срок: ${deadline}`,
     `Риск: ${task.riskLabel} ${task.riskScore}`,
     `Последняя активность: ${activity}`,
+    `Кому сейчас мяч: ${item.ballOwner || task.ballOwnerLabel || 'не определено'}`,
     `Причина: ${item.flags.join('; ')}`,
     `Действие: ${item.action}`
   ].join('\n');
@@ -2074,6 +2234,7 @@ function buildDigestCsvRows(tasks) {
     category: item.categoryLabel,
     priority: item.priorityLabel,
     flags: item.flags.join('; '),
+    ball_owner: item.ballOwner || item.task.ballOwnerLabel,
     action: item.action,
     forward_text: buildDigestTaskForwardText(item),
     task_id: item.task.id,
@@ -2086,6 +2247,8 @@ function buildDigestCsvRows(tasks) {
     status: item.task.status,
     deadline: formatDateTime(item.task.deadline),
     overdue_days: item.task.overdueDays,
+    waiting_control_days: item.task.waitingControlDays,
+    control_red_after_days: settings.waitingControlRedDays,
     risk_score: item.task.riskScore,
     risk: item.task.riskLabel
   }));
@@ -2133,6 +2296,7 @@ function renderAllTasks(tasks) {
     ['ID', t => escapeHtml(t.id)],
     ['Задача', t => `<div class="task-title">${escapeHtml(t.title)}</div>`],
     ['Кому писать', t => `${escapeHtml(getTaskEscalationOwners(t))}<div class="small">${escapeHtml(getTaskEscalationRoleLabel(t))}</div>`],
+    ['Кому мяч', t => `<div class="action">${escapeHtml(t.ballOwnerLabel)}</div>`],
     ['Ответственный', t => escapeHtml(t.responsible)],
     ['Проект', t => `<div class="project-name">${escapeHtml(t.project)}</div>`],
     ['Статус', t => escapeHtml(t.status)],
@@ -2207,6 +2371,8 @@ function taskCsvRow(t) {
     action: t.recommendedAction,
     escalation_to: getTaskEscalationOwners(t),
     escalation_role: getTaskEscalationRoleLabel(t),
+    ball_owner: t.ballOwnerLabel,
+    digest_signal: t.digestSignalLabel,
     control_shifted_from_responsible: t.isLongWaitingControl ? 'yes' : 'no',
     responsible: t.responsible,
     project: t.project,
