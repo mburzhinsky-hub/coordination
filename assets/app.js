@@ -55,6 +55,16 @@ const settings = {
     maxHygieneItems: 5,
     maxChangesItems: 5,
     maxInfoItems: 4
+  },
+  actionOnly: {
+    minRiskScore: 50,
+    overdueEscalationDays: 3,
+    staleEscalationDays: 14,
+    projectRiskScore: 25,
+    peopleIssueLimit: 15,
+    projectIssueLimit: 15,
+    pushLimit: 60,
+    movementLimit: 40
   }
 };
 
@@ -628,6 +638,137 @@ function getFilteredTasks() {
   });
 }
 
+
+function isConcreteTask(task) {
+  return Boolean(
+    task.isWaitingControl
+    || task.overdue
+    || task.dueToday
+    || task.dueSoon
+    || task.noDeadline
+    || task.stale14
+    || task.isObserverVisibleControl
+    || task.isLongWaitingControl
+    || task.riskScore >= settings.actionOnly.minRiskScore
+  );
+}
+
+function isHighSignalTask(task) {
+  return Boolean(
+    task.isLongWaitingControl
+    || (task.isWaitingControl && task.waitingControlDays >= settings.waitingControlObserverDays)
+    || (task.overdue && task.overdueDays >= settings.actionOnly.overdueEscalationDays)
+    || task.dueToday
+    || task.riskScore >= settings.actionOnly.minRiskScore
+    || task.stale14
+    || task.noDeadline
+  );
+}
+
+function getTaskActionCategory(task) {
+  if (task.isLongWaitingControl) return { label: 'Приемка зависла', color: 'red', rank: 1 };
+  if (task.overdue && !task.isWaitingControl) return { label: 'Просрочка', color: 'red', rank: 2 };
+  if (task.riskScore >= 80) return { label: 'Красный риск', color: 'red', rank: 3 };
+  if (task.isWaitingControl) return { label: 'Проверить результат', color: task.isObserverVisibleControl ? 'blue' : 'orange', rank: 4 };
+  if (task.dueToday) return { label: 'Срок сегодня', color: 'orange', rank: 5 };
+  if (task.riskScore >= settings.actionOnly.minRiskScore) return { label: 'Высокий риск', color: 'orange', rank: 6 };
+  if (task.noDeadline) return { label: 'Нет срока', color: 'gray', rank: 7 };
+  if (task.stale14) return { label: 'Нет движения', color: 'yellow', rank: 8 };
+  if (task.dueSoon) return { label: 'Срок скоро', color: 'yellow', rank: 9 };
+  return { label: 'Справочно', color: 'gray', rank: 99 };
+}
+
+function getTaskActionReason(task) {
+  if (task.isLongWaitingControl) return `задача ${task.waitingControlDays} дн. ждёт приемки`;
+  if (task.isWaitingControl) return `результат ждёт проверки ${task.waitingControlDays || 0} дн.`;
+  if (task.overdue) return `просрочено ${task.overdueDays} дн.`;
+  if (task.dueToday) return 'срок сегодня';
+  if (task.riskScore >= 80) return `красный риск ${task.riskScore}`;
+  if (task.riskScore >= settings.actionOnly.minRiskScore) return `риск ${task.riskScore}`;
+  if (task.noDeadline) return 'нет крайнего срока';
+  if (task.stale14) return `нет активности ${task.staleDays} дн.`;
+  if (task.dueSoon) return `срок через ${task.deadlineDeltaDays} дн.`;
+  return 'нет срочного сигнала';
+}
+
+function getTaskNextAction(task) {
+  if (task.isLongWaitingControl) return 'добиться приемки: принять, закрыть или вернуть исполнителю';
+  if (task.isWaitingControl) return 'проверить результат и принять решение';
+  if (task.overdue) return 'получить результат, блокер или новый срок';
+  if (task.dueToday) return 'подтвердить готовность до конца дня';
+  if (task.noDeadline) return 'назначить крайний срок';
+  if (task.stale14) return 'запросить актуальный статус';
+  if (task.dueSoon) return 'проверить риск срыва заранее';
+  if (task.riskScore >= settings.actionOnly.minRiskScore) return task.recommendedAction || 'разобрать причину риска';
+  return task.recommendedAction || 'без действия';
+}
+
+function getActionQueueRows(tasks, options = {}) {
+  const limit = options.limit || settings.actionOnly.pushLimit;
+  return [...tasks]
+    .filter(isConcreteTask)
+    .sort((a, b) => {
+      const ca = getTaskActionCategory(a);
+      const cb = getTaskActionCategory(b);
+      return ca.rank - cb.rank
+        || b.riskScore - a.riskScore
+        || b.overdueDays - a.overdueDays
+        || b.waitingControlDays - a.waitingControlDays
+        || String(a.title).localeCompare(String(b.title));
+    })
+    .slice(0, limit);
+}
+
+function getCommunicationRows(tasks) {
+  const groups = groupBy(getActionQueueRows(tasks, { limit: 999 }), t => getTaskEscalationOwners(t));
+  return Object.entries(groups).map(([owner, rows]) => ({
+    owner,
+    total: rows.length,
+    red: count(rows, t => getTaskActionCategory(t).color === 'red'),
+    check: count(rows, t => t.isWaitingControl),
+    today: count(rows, t => t.dueToday),
+    topReason: getTaskActionReason(rows[0]),
+    topAction: getTaskNextAction(rows[0]),
+    role: getTaskEscalationRoleLabel(rows[0])
+  })).sort((a, b) => b.red - a.red || b.check - a.check || b.total - a.total || a.owner.localeCompare(b.owner));
+}
+
+function hasPeopleActionSignal(person) {
+  return person.overdue > 0 || person.controlShifted > 0 || person.dueToday > 0 || person.noDeadline > 0 || person.stale14 > 0 || person.workloadScore >= 21 || person.availabilityScore < 55;
+}
+
+function getPeopleActionReason(person) {
+  if (person.overdue > 0) return `просрочек: ${person.overdue}`;
+  if (person.controlShifted > 0) return `приемка зависла: ${person.controlShifted}`;
+  if (person.availabilityScore < 35) return 'не нагружать';
+  if (person.workloadScore >= 21) return 'перегруз';
+  if (person.noDeadline > 0) return `без срока: ${person.noDeadline}`;
+  if (person.stale14 > 0) return `нет движения: ${person.stale14}`;
+  if (person.dueToday > 0) return `срок сегодня: ${person.dueToday}`;
+  return 'без срочного сигнала';
+}
+
+function hasProjectActionSignal(project) {
+  return project.overdue > 0 || project.waitingControl > 0 || project.longWaitingControl > 0 || project.noDeadline > 0 || project.stale14 > 0 || project.riskScore >= settings.actionOnly.projectRiskScore;
+}
+
+function getProjectAction(project) {
+  if (project.longWaitingControl > 0) return 'снять зависшую приемку';
+  if (project.overdue > 0) return 'разобрать просрочки';
+  if (project.waitingControl > 0) return 'принять / вернуть результаты';
+  if (project.noDeadline > 0) return 'назначить сроки';
+  if (project.stale14 > 0) return 'запросить движение';
+  if (project.riskScore >= settings.actionOnly.projectRiskScore) return 'проверить причины риска';
+  return 'без действия';
+}
+
+function filterHighSignalMovementRows(rows) {
+  return (rows || []).filter(row => {
+    const text = `${row.type || ''} ${row.detail || ''}`.toLowerCase();
+    return /просроч|контрол|риск|срок|ответствен|новая|появил/.test(text) || row.riskScore >= settings.actionOnly.minRiskScore;
+  }).slice(0, settings.actionOnly.movementLimit);
+}
+
 function renderUploadReport() {
   const target = el('uploadReportContent');
   if (!target) return;
@@ -637,8 +778,9 @@ function renderUploadReport() {
     ? `Сравнение с предыдущей выгрузкой: ${report.previousFile}`
     : 'Предыдущая выгрузка не найдена — показан базовый срез без динамики.';
 
+  const signalMovementRows = filterHighSignalMovementRows(report.movementRows);
   const movementHtml = report.hasPrevious
-    ? tableHtml(report.movementRows.slice(0, 80), [
+    ? tableHtml(signalMovementRows, [
       ['Событие', r => badge(r.type, r.color)],
       ['Деталь', r => escapeHtml(r.detail)],
       ['Ответственный', r => escapeHtml(r.responsible)],
@@ -657,18 +799,13 @@ function renderUploadReport() {
       <span><b>${escapeHtml(compareText)}</b></span>
     </div>
 
-    <div class="report-kpi-grid">
-      ${reportMetricHtml('Всего задач', report.metrics.total, reportDelta(report, 'total'), 'В расчете после исключений', 'blue', 'neutral')}
-      ${reportMetricHtml('Новые задачи', report.diff.added.length, null, 'Появились с прошлого среза', report.diff.added.length ? 'blue' : 'green')}
-      ${reportMetricHtml('Ушли из выгрузки', report.diff.removed.length, null, 'Вероятно закрыты или не попали в фильтр Битрикс24', report.diff.removed.length ? 'green' : 'gray')}
-      ${reportMetricHtml('Новые просрочки', report.diff.newOverdue.length, null, 'Стали просроченными между срезами', report.diff.newOverdue.length ? 'red' : 'green')}
-      ${reportMetricHtml('Просрочки сняты', report.diff.resolvedOverdue.length, null, 'Были просрочены, теперь нет', report.diff.resolvedOverdue.length ? 'green' : 'gray')}
-      ${reportMetricHtml('Ждёт контроля', report.metrics.waitingControl, reportDelta(report, 'waitingControl'), 'Нужно принять или вернуть', report.metrics.waitingControl ? 'blue' : 'green')}
-      ${reportMetricHtml(`Контроль ${settings.waitingControlObserverDays}+ дн.`, report.metrics.observerControl, reportDelta(report, 'observerControl'), 'Подключить наблюдателей', report.metrics.observerControl ? 'blue' : 'green')}
-      ${reportMetricHtml(`Контроль ${settings.waitingControlRedDays}+ дн.`, report.metrics.longWaitingControl, reportDelta(report, 'longWaitingControl'), 'Красная зона приемки', report.metrics.longWaitingControl ? 'red' : 'green')}
-      ${reportMetricHtml('Красный/оранжевый риск', report.metrics.highRisk, reportDelta(report, 'highRisk'), 'Задачи с риском 50+', report.metrics.highRisk ? 'orange' : 'green')}
-      ${reportMetricHtml('Без срока', report.metrics.noDeadline, reportDelta(report, 'noDeadline'), 'Нужно назначить дедлайн', report.metrics.noDeadline ? 'gray' : 'green')}
-      ${reportMetricHtml('Средний риск', report.metrics.avgRisk, reportDelta(report, 'avgRisk'), 'Средний индекс риска', riskColor(report.metrics.avgRisk), 'neutral')}
+    <div class="report-kpi-grid compact-signal-grid">
+      ${reportMetricHtml('Новые просрочки', report.diff.newOverdue.length, null, 'Сразу разобрать владельцев', report.diff.newOverdue.length ? 'red' : 'green')}
+      ${reportMetricHtml(`Контроль ${settings.waitingControlRedDays}+ дн.`, report.metrics.longWaitingControl, reportDelta(report, 'longWaitingControl'), 'Приемка зависла', report.metrics.longWaitingControl ? 'red' : 'green')}
+      ${reportMetricHtml('Срок сегодня', report.metrics.dueToday, reportDelta(report, 'dueToday'), 'Проверить до конца дня', report.metrics.dueToday ? 'orange' : 'green')}
+      ${reportMetricHtml('Высокий риск', report.metrics.highRisk, reportDelta(report, 'highRisk'), 'Риск 50+', report.metrics.highRisk ? 'orange' : 'green')}
+      ${reportMetricHtml('Без срока', report.metrics.noDeadline, reportDelta(report, 'noDeadline'), 'Назначить дедлайн', report.metrics.noDeadline ? 'gray' : 'green')}
+      ${reportMetricHtml('Просрочки сняты', report.diff.resolvedOverdue.length, null, 'Положительная динамика', report.diff.resolvedOverdue.length ? 'green' : 'gray')}
     </div>
 
     <div class="report-layout">
@@ -716,8 +853,8 @@ function renderUploadReport() {
     </div>
 
     <div class="report-panel report-panel-full">
-      <h3>Журнал движения задач</h3>
-      <p class="muted">Показывает события между текущей и предыдущей выгрузкой: новые задачи, исчезнувшие задачи, новые и снятые просрочки, смену статусов, сроков, ответственных и резкие изменения риска.</p>
+      <h3>Сигнальные изменения</h3>
+      <p class="muted">Показываем только изменения, по которым есть действие: просрочки, контроль, сроки, ответственные, рост риска и новые задачи. Остальной шум скрыт.</p>
       <div class="table-wrap">${movementHtml}</div>
     </div>
   `;
@@ -985,83 +1122,66 @@ function buildReportCsvRows(report) {
 }
 
 function renderKpis(tasks) {
+  const actionRows = getActionQueueRows(tasks, { limit: 999 });
+  const commRows = getCommunicationRows(tasks);
   const kpis = [
-    ['Всего задач', tasks.length, 'Активный срез выгрузки', 'blue'],
-    ['Просрочено', count(tasks, t => t.overdue), 'Пуш сегодня', 'red'],
-    ['Срок сегодня', count(tasks, t => t.dueToday), 'Проверить готовность', 'orange'],
-    ['Ближайшие 3 дня', count(tasks, t => t.dueSoon), 'Профилактика срыва', 'yellow'],
-    ['Ждёт контроля', count(tasks, t => t.isWaitingControl), 'Принять / вернуть', 'blue'],
-    [`Контроль ${settings.waitingControlObserverDays}+ дн.`, count(tasks, t => t.isObserverVisibleControl), 'Подключить наблюдателей', 'blue'],
-    [`Контроль ${settings.waitingControlRedDays}+ дн.`, count(tasks, t => t.isLongWaitingControl), 'Красная зона приемки', 'red'],
-    ['Без срока', count(tasks, t => t.noDeadline), 'Нужно назначить дедлайн', 'gray'],
-    ['Нет активности > 14 дн.', count(tasks, t => t.stale14), 'Зависшие задачи', 'gray'],
-    ['Без родителя', count(tasks, t => t.noParent), 'Нет проектной привязки', 'gray'],
-    ['Средний риск', avg(tasks.map(t => t.riskScore)).toFixed(0), 'Индекс по задачам', riskColor(avg(tasks.map(t => t.riskScore)))]
+    ['Действий сегодня', actionRows.length, 'Только задачи с понятным следующим шагом', actionRows.length ? 'blue' : 'green'],
+    ['Красная зона', count(actionRows, t => getTaskActionCategory(t).color === 'red'), 'Просрочки, зависшая приемка, красный риск', count(actionRows, t => getTaskActionCategory(t).color === 'red') ? 'red' : 'green'],
+    ['Кому писать', commRows.length, 'Уникальные адресаты коммуникации', commRows.length ? 'orange' : 'green'],
+    [`Приемка ${settings.waitingControlRedDays}+ дн.`, count(tasks, t => t.isLongWaitingControl), 'Мяч у постановщика / наблюдателей', count(tasks, t => t.isLongWaitingControl) ? 'red' : 'green'],
+    ['Срок сегодня', count(tasks, t => t.dueToday), 'Подтвердить готовность', count(tasks, t => t.dueToday) ? 'orange' : 'green'],
+    ['Без срока', count(tasks, t => t.noDeadline), 'Назначить дедлайн', count(tasks, t => t.noDeadline) ? 'gray' : 'green']
   ];
   el('kpiCards').innerHTML = kpis.map(([label, value, hint, color]) => kpiHtml(label, value, hint, color)).join('');
 }
 
 function renderPushList(tasks) {
-  const rows = [...tasks]
-    .filter(t => t.riskScore > 0 || t.isWaitingControl || t.overdue || t.noDeadline || t.stale14)
-    .sort((a, b) => b.riskScore - a.riskScore || b.overdueDays - a.overdueDays)
-    .slice(0, 100);
-
+  const rows = getActionQueueRows(tasks);
   el('pushList').innerHTML = tableHtml(rows, [
-    ['Риск', t => badge(t.riskLabel, t.riskColor) + `<div class="small">${t.riskScore}</div>`],
-    ['Действие', t => `<div class="action">${escapeHtml(t.recommendedAction)}</div>`],
+    ['Сигнал', t => {
+      const c = getTaskActionCategory(t);
+      return badge(c.label, c.color) + `<div class="small">${escapeHtml(getTaskActionReason(t))}</div>`;
+    }],
     ['Кому писать', t => `${escapeHtml(getTaskEscalationOwners(t))}<div class="small">${escapeHtml(getTaskEscalationRoleLabel(t))}</div>`],
     ['Кому мяч', t => `<div class="action">${escapeHtml(t.ballOwnerLabel)}</div>`],
-    ['Ответственный', t => escapeHtml(t.responsible)],
-    ['Проект', t => `<div class="project-name">${escapeHtml(t.project)}</div>`],
-    ['Задача', t => `<div class="task-title">${escapeHtml(t.title)}</div><div class="small">ID: ${escapeHtml(t.id)}</div>`],
-    ['Статус', t => escapeHtml(t.status)],
-    ['Срок', t => formatDateTime(t.deadline)],
-    ['Просрочка', t => t.overdue ? `${t.overdueDays} дн.` : ''],
-    ['Активность', t => t.lastActivity ? `${formatDate(t.lastActivity)}<div class="small">${t.staleDays} дн.</div>` : ''],
-    ['Комментарий', t => escapeHtml(t.systemComment)]
+    ['Что сделать', t => `<div class="action action-strong">${escapeHtml(getTaskNextAction(t))}</div>`],
+    ['Задача', t => `<div class="task-title">${escapeHtml(t.title)}</div><div class="small">ID: ${escapeHtml(t.id)} · ${escapeHtml(t.project || 'Без проекта')}</div>`],
+    ['Срок', t => formatDateTime(t.deadline) || 'нет срока']
   ]);
 
-  const available = summarizePeople(tasks)
-    .filter(p => p.availabilityScore >= 55)
-    .sort((a, b) => b.availabilityScore - a.availabilityScore)
-    .slice(0, 12);
-  el('availablePeople').innerHTML = tableHtml(available, [
-    ['Сотрудник', p => escapeHtml(p.responsible)],
-    ['Доступность', p => badge(p.availabilityCategory, p.availabilityColor) + `<div class="small">${p.availabilityScore}</div>`],
-    ['Загрузка', p => `${p.workloadScore.toFixed(1)}<div class="small">${escapeHtml(p.workloadCategory)}</div>`],
-    ['Рекомендация', p => escapeHtml(p.recommendation)]
+  const communications = getCommunicationRows(tasks).slice(0, 18);
+  el('availablePeople').innerHTML = tableHtml(communications, [
+    ['Кому писать', r => `<b>${escapeHtml(r.owner)}</b><div class="small">${escapeHtml(r.role)}</div>`],
+    ['Красная зона', r => badge(String(r.red), r.red ? 'red' : 'green')],
+    ['Проверка', r => badge(String(r.check), r.check ? 'blue' : 'green')],
+    ['Всего действий', r => r.total],
+    ['Первое действие', r => `<div class="action">${escapeHtml(r.topAction)}</div>`]
   ]);
 }
 
 function renderPeople(tasks) {
-  const people = summarizePeople(tasks);
-  const canUse = people.filter(p => p.availabilityScore >= 75).length;
-  const overloaded = people.filter(p => p.workloadScore >= 21 || p.overdue > 0 && p.availabilityScore < 35).length;
+  const allPeople = summarizePeople(tasks);
+  const people = allPeople.filter(hasPeopleActionSignal).slice(0, settings.actionOnly.peopleIssueLimit);
+  const canUse = allPeople.filter(p => p.availabilityScore >= 75 && !hasPeopleActionSignal(p)).length;
+  const overloaded = allPeople.filter(p => p.workloadScore >= 21 || p.overdue > 0 && p.availabilityScore < 35).length;
   el('peopleSummary').innerHTML = [
-    `Сотрудников: ${people.length}`,
-    `Можно рассчитывать: ${canUse}`,
-    `Перегруз / высокий риск: ${overloaded}`,
-    `Всего просрочек: ${sum(people.map(p => p.overdue))}`
+    `В фокусе: ${people.length}`,
+    `Перегруз / риск: ${overloaded}`,
+    `Просрочки: ${sum(allPeople.map(p => p.overdue))}`,
+    `Свободны без проблем: ${canUse}`
   ].map(x => `<span class="summary-pill">${escapeHtml(x)}</span>`).join('');
 
-  el('peopleBars').innerHTML = barChartHtml(people.slice(0, 12), 'responsible', 'workloadScore', 'Индекс загрузки');
+  el('peopleBars').innerHTML = barChartHtml(people.slice(0, 10), 'responsible', 'workloadScore', 'Только люди с действием / риском');
   el('peopleTable').innerHTML = tableHtml(people, [
-    ['Ответственный', p => escapeHtml(p.responsible)],
-    ['Всего', p => p.total],
-    ['В работе', p => p.inProgress],
-    ['Ждёт вып.', p => p.waiting],
-    ['Ждёт контроля', p => p.waitingControl],
-    ['Контроль у постановщика', p => badge(String(p.controlShifted), p.controlShifted ? 'blue' : 'green')],
+    ['Сотрудник', p => escapeHtml(p.responsible)],
+    ['Почему в фокусе', p => badge(getPeopleActionReason(p), p.overdue ? 'red' : p.controlShifted ? 'blue' : p.availabilityScore < 55 ? 'orange' : 'gray')],
     ['Просрочено', p => badge(String(p.overdue), p.overdue ? 'red' : 'green')],
+    ['Приемка зависла', p => badge(String(p.controlShifted), p.controlShifted ? 'blue' : 'green')],
     ['Сегодня', p => p.dueToday],
-    ['3 дня', p => p.dueSoon],
     ['Без срока', p => p.noDeadline],
-    ['Нет акт. >14', p => p.stale14],
+    ['Нет движения', p => p.stale14],
     ['Загрузка', p => `${p.workloadScore.toFixed(1)}<div class="small">${escapeHtml(p.workloadCategory)}</div>`],
-    ['Надежность', p => `${p.reliabilityScore}<div class="small">${escapeHtml(p.reliabilityCategory)}</div>`],
-    ['Доступность', p => badge(p.availabilityCategory, p.availabilityColor) + `<div class="small">${p.availabilityScore}</div>`],
-    ['Рекомендация', p => escapeHtml(p.recommendation)]
+    ['Решение', p => `<div class="action">${escapeHtml(p.recommendation)}</div>`]
   ]);
 }
 
@@ -1127,19 +1247,18 @@ function buildPeopleRecommendation(p) {
 }
 
 function renderProjects(tasks) {
-  const projects = summarizeProjects(tasks);
-  el('projectBars').innerHTML = barChartHtml(projects.slice(0, 12), 'project', 'riskScore', 'Индекс риска');
+  const allProjects = summarizeProjects(tasks);
+  const projects = allProjects.filter(hasProjectActionSignal).slice(0, settings.actionOnly.projectIssueLimit);
+  el('projectBars').innerHTML = barChartHtml(projects.slice(0, 10), 'project', 'riskScore', 'Проекты с управленческим сигналом');
   el('projectTable').innerHTML = tableHtml(projects, [
-    ['Проект / родительская задача', p => `<div class="project-name">${escapeHtml(p.project)}</div>`],
-    ['Всего', p => p.total],
+    ['Проект', p => `<div class="project-name">${escapeHtml(p.project)}</div>`],
+    ['Сигнал', p => badge(getProjectAction(p), p.longWaitingControl ? 'red' : p.overdue ? 'red' : p.waitingControl ? 'blue' : p.riskScore >= 50 ? 'orange' : 'gray')],
     ['Просрочено', p => badge(String(p.overdue), p.overdue ? 'red' : 'green')],
-    ['Сегодня', p => p.dueToday],
-    ['3 дня', p => p.dueSoon],
+    ['Приемка зависла', p => badge(String(p.longWaitingControl), p.longWaitingControl ? 'red' : 'green')],
     ['Ждёт контроля', p => p.waitingControl],
     ['Без срока', p => p.noDeadline],
-    ['Нет акт. >14', p => p.stale14],
-    ['Ответственных', p => p.peopleCount],
-    ['Главный ответственный', p => escapeHtml(p.mainResponsible)],
+    ['Нет движения', p => p.stale14],
+    ['Кому писать первым', p => escapeHtml(p.mainResponsible)],
     ['Риск', p => badge(p.riskLabel, p.riskColor) + `<div class="small">${p.riskScore}</div>`]
   ]);
 }
@@ -1148,71 +1267,68 @@ function summarizeProjects(tasks) {
   const groups = groupBy(tasks, t => t.project || 'Без проекта / без родительской задачи');
   return Object.entries(groups).map(([project, rows]) => {
     const total = rows.length;
-    const overdue = count(rows, t => t.overdue);
+    const overdue = count(rows, t => t.overdue && !t.isWaitingControl);
     const dueToday = count(rows, t => t.dueToday);
     const dueSoon = count(rows, t => t.dueSoon);
     const waitingControl = count(rows, t => t.isWaitingControl);
+    const longWaitingControl = count(rows, t => t.isLongWaitingControl);
     const noDeadline = count(rows, t => t.noDeadline);
     const stale14 = count(rows, t => t.stale14);
-    const people = groupBy(rows, t => t.responsible);
+    const people = groupBy(rows, t => getTaskEscalationOwners(t) || t.responsible);
     const peopleCount = Object.keys(people).length;
     const mainResponsible = Object.entries(people).sort((a, b) => b[1].length - a[1].length)[0]?.[0] || '';
-    const riskScore = Math.round(avg(rows.map(t => t.riskScore)) + overdue * 4 + waitingControl * 2 + noDeadline * 1.5);
+    const riskScore = Math.round(avg(rows.map(t => t.riskScore)) + overdue * 4 + longWaitingControl * 6 + waitingControl * 2 + noDeadline * 1.5 + stale14 * 2);
     const color = riskColor(riskScore);
-    return { project, total, overdue, dueToday, dueSoon, waitingControl, noDeadline, stale14, peopleCount, mainResponsible, riskScore: Math.min(100, riskScore), riskColor: color, riskLabel: riskLabel(color) };
-  }).sort((a, b) => b.riskScore - a.riskScore || b.total - a.total);
+    return { project, total, overdue, dueToday, dueSoon, waitingControl, longWaitingControl, noDeadline, stale14, peopleCount, mainResponsible, riskScore: Math.min(100, riskScore), riskColor: color, riskLabel: riskLabel(color) };
+  }).sort((a, b) => b.riskScore - a.riskScore || b.longWaitingControl - a.longWaitingControl || b.overdue - a.overdue || b.total - a.total);
 }
 
 function renderControl(tasks) {
-  const rows = tasks.filter(t => t.isWaitingControl).sort((a, b) => b.riskScore - a.riskScore);
+  const rows = tasks.filter(t => t.isWaitingControl).sort((a, b) => b.waitingControlDays - a.waitingControlDays || b.riskScore - a.riskScore);
   el('controlTable').innerHTML = tableHtml(rows, [
-    ['Риск', t => badge(t.riskLabel, t.riskColor)],
-    ['Задача', t => `<div class="task-title">${escapeHtml(t.title)}</div>`],
-    ['Проект', t => `<div class="project-name">${escapeHtml(t.project)}</div>`],
+    ['Приоритет', t => {
+      const c = getTaskActionCategory(t);
+      return badge(c.label, c.color) + `<div class="small">${escapeHtml(getTaskActionReason(t))}</div>`;
+    }],
     ['Кому писать', t => `${escapeHtml(getTaskEscalationOwners(t))}<div class="small">${escapeHtml(getTaskEscalationRoleLabel(t))}</div>`],
     ['Кому мяч', t => `<div class="action">${escapeHtml(t.ballOwnerLabel)}</div>`],
-    ['Ответственный', t => `${escapeHtml(t.responsible)}${t.isLongWaitingControl ? '<div class="small">снято с красной зоны исполнителя</div>' : ''}`],
-    ['Постановщик', t => escapeHtml(t.author)],
-    ['Срок', t => formatDateTime(t.deadline)],
-    ['Последнее изменение', t => formatDateTime(t.changed)],
-    ['Действие', t => t.isLongWaitingControl ? 'Постановщику / наблюдателям принять или вернуть результат' : (t.isObserverVisibleControl ? 'Постановщику проверить; наблюдателям подключиться к контролю' : 'Постановщику проверить результат')]
+    ['Что сделать', t => `<div class="action action-strong">${escapeHtml(getTaskNextAction(t))}</div>`],
+    ['Задача', t => `<div class="task-title">${escapeHtml(t.title)}</div><div class="small">ID: ${escapeHtml(t.id)} · Исполнитель: ${escapeHtml(t.responsible || 'не указан')}</div>`],
+    ['Проект', t => `<div class="project-name">${escapeHtml(t.project)}</div>`],
+    ['Изменена', t => formatDateTime(t.changed)]
   ]);
 }
 
 function renderHygiene(tasks) {
   const issues = buildHygieneIssues(tasks);
   const kpis = [
-    ['Нет срока', count(tasks, t => t.noDeadline), 'Назначить дедлайн', 'gray'],
-    ['Нет родителя', count(tasks, t => t.noParent), 'Привязать к проекту', 'gray'],
+    ['Без срока', count(tasks, t => t.noDeadline), 'Назначить дедлайн', 'gray'],
     ['Нет активности >14', count(tasks, t => t.stale14), 'Запросить статус', 'orange'],
-    ['Ждёт контроля', count(tasks, t => t.isWaitingControl), 'Разобрать inbox', 'blue'],
-    ['Нет оценки', count(tasks, t => !t.estimate), 'Нет данных по трудозатратам', 'gray']
+    [`Приемка ${settings.waitingControlRedDays}+ дн.`, count(tasks, t => t.isLongWaitingControl), 'Снять зависание', 'red'],
+    ['Ждёт контроля', count(tasks, t => t.isWaitingControl), 'Разобрать inbox', 'blue']
   ];
   el('hygieneCards').innerHTML = kpis.map(([label, value, hint, color]) => kpiHtml(label, value, hint, color)).join('');
   el('hygieneTable').innerHTML = tableHtml(issues, [
-    ['Нарушение', i => badge(i.issue, i.color)],
-    ['Ответственный', i => escapeHtml(i.responsible)],
-    ['Проект', i => `<div class="project-name">${escapeHtml(i.project)}</div>`],
-    ['Задача', i => `<div class="task-title">${escapeHtml(i.title)}</div>`],
-    ['Статус', i => escapeHtml(i.status)],
-    ['Действие', i => escapeHtml(i.action)]
+    ['Сигнал', i => badge(i.issue, i.color)],
+    ['Кому писать', i => escapeHtml(i.owner || i.responsible)],
+    ['Задача', i => `<div class="task-title">${escapeHtml(i.title)}</div><div class="small">${escapeHtml(i.project)}</div>`],
+    ['Что сделать', i => `<div class="action">${escapeHtml(i.action)}</div>`]
   ]);
 }
 
 function buildHygieneIssues(tasks) {
   const issues = [];
   tasks.forEach(t => {
+    if (t.isLongWaitingControl) issues.push(issueRow(t, `Приемка ${t.waitingControlDays} дн.`, 'red', 'Принять, закрыть или вернуть результат'));
+    else if (t.isWaitingControl) issues.push(issueRow(t, `Ждёт контроля ${t.waitingControlDays || 0} дн.`, t.isObserverVisibleControl ? 'blue' : 'orange', 'Проверить результат'));
     if (t.noDeadline) issues.push(issueRow(t, 'Нет срока', 'gray', 'Назначить крайний срок'));
-    if (t.noParent) issues.push(issueRow(t, 'Нет родителя', 'gray', 'Привязать к проекту / родительской задаче'));
-    if (t.stale14) issues.push(issueRow(t, 'Нет активности >14 дн.', 'orange', 'Запросить актуальный статус'));
-    if (t.isWaitingControl) issues.push(issueRow(t, 'Ждёт контроля', 'blue', 'Принять или вернуть'));
-    if (!t.estimate) issues.push(issueRow(t, 'Нет оценки', 'gray', 'Оценить трудозатраты, если это проектная задача'));
+    if (t.stale14) issues.push(issueRow(t, `Нет активности ${t.staleDays} дн.`, 'orange', 'Запросить актуальный статус'));
   });
   return issues.sort((a, b) => colorWeight(b.color) - colorWeight(a.color));
 }
 
 function issueRow(t, issue, color, action) {
-  return { issue, color, action, responsible: t.responsible, project: t.project, title: t.title, status: t.status, id: t.id };
+  return { issue, color, action, owner: getTaskEscalationOwners(t), responsible: t.responsible, project: t.project, title: t.title, status: t.status, id: t.id };
 }
 
 function fillDigestPeople() {
@@ -1703,32 +1819,32 @@ function buildCurrentDigestMiniReportDocumentHtml() {
 function getStandaloneDigestReportStyles() {
   return `
     :root {
-      --bg: #eef3fb;
-      --card: #ffffff;
-      --text: #162033;
-      --muted: #64748b;
-      --line: #dde5f0;
-      --blue: #1d4ed8;
-      --red: #dc2626;
-      --orange: #ea580c;
-      --yellow: #ca8a04;
-      --green: #16a34a;
+      --bg: #050816;
+      --card: #0f172a;
+      --text: #e6f1ff;
+      --muted: #8aa4c7;
+      --line: rgba(125, 211, 252, .18);
+      --blue: #38bdf8;
+      --red: #ff3b6b;
+      --orange: #fb923c;
+      --yellow: #facc15;
+      --green: #22c55e;
       --gray: #64748b;
-      --shadow: 0 16px 40px rgba(15, 23, 42, .10);
+      --shadow: 0 20px 60px rgba(0,0,0,.35);
     }
     * { box-sizing: border-box; }
-    body { margin: 0; padding: 24px; background: var(--bg); color: var(--text); font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
+    body { margin: 0; padding: 24px; background: radial-gradient(circle at 10% 0%, rgba(56,189,248,.20), transparent 34%), var(--bg); color: var(--text); font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
     .badge { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 5px 9px; font-size: 12px; font-weight: 900; white-space: nowrap; }
-    .badge.red { background: #fee2e2; color: #991b1b; }
-    .badge.orange { background: #ffedd5; color: #9a3412; }
-    .badge.yellow { background: #fef3c7; color: #92400e; }
-    .badge.green { background: #dcfce7; color: #166534; }
-    .badge.gray { background: #e2e8f0; color: #334155; }
-    .badge.blue { background: #dbeafe; color: #1e40af; }
+    .badge.red { background: #fee2e2; color: #fb7185; }
+    .badge.orange { background: #ffedd5; color: #fdba74; }
+    .badge.yellow { background: #fef3c7; color: #fde047; }
+    .badge.green { background: #dcfce7; color: #86efac; }
+    .badge.gray { background: #e2e8f0; color: #bfdbfe; }
+    .badge.blue { background: #dbeafe; color: #7dd3fc; }
     .small { font-size: 12px; color: var(--muted); }
     .eyebrow { text-transform: uppercase; letter-spacing: .08em; font-size: 11px; font-weight: 900; opacity: .82; }
     ${cleanText(`
-      .mini-report-sheet { max-width: 960px; margin: 0 auto; border: 1px solid #dbe4f2; border-radius: 22px; background: #ffffff; overflow: hidden; box-shadow: var(--shadow); }
+      .mini-report-sheet { max-width: 960px; margin: 0 auto; border: 1px solid var(--line); border-radius: 22px; background: rgba(15,23,42,.90); overflow: hidden; box-shadow: var(--shadow); }
       .mini-report-topbar { display: flex; justify-content: space-between; gap: 16px; align-items: center; padding: 14px 18px; background: linear-gradient(135deg, #0f172a, #1d4ed8); color: #fff; }
       .mini-report-brand { display: grid; gap: 4px; }
       .mini-report-context { text-align: right; font-size: 12px; opacity: .9; }
@@ -1738,29 +1854,29 @@ function getStandaloneDigestReportStyles() {
       .mini-report-header p { margin: 0 0 6px; color: var(--muted); line-height: 1.5; }
       .mini-report-score { min-width: 170px; text-align: center; border-radius: 20px; background: #eff6ff; border: 1px solid #bfdbfe; padding: 14px 12px; }
       .mini-report-score strong { display: block; font-size: 34px; line-height: 1; color: var(--blue); }
-      .mini-report-score span { display: block; margin-top: 6px; font-size: 12px; font-weight: 800; color: #334155; }
+      .mini-report-score span { display: block; margin-top: 6px; font-size: 12px; font-weight: 800; color: #bfdbfe; }
       .mini-report-kpis { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 10px; margin-bottom: 16px; }
-      .mini-report-kpi { border: 1px solid var(--line); border-top: 4px solid var(--blue); border-radius: 16px; padding: 12px; background: #fff; min-height: 94px; }
+      .mini-report-kpi { border: 1px solid var(--line); border-top: 4px solid var(--blue); border-radius: 16px; padding: 12px; background: rgba(2,6,23,.56); min-height: 94px; }
       .mini-report-kpi.red { border-top-color: var(--red); } .mini-report-kpi.orange { border-top-color: var(--orange); } .mini-report-kpi.yellow { border-top-color: var(--yellow); } .mini-report-kpi.green { border-top-color: var(--green); } .mini-report-kpi.gray { border-top-color: var(--gray); } .mini-report-kpi.blue { border-top-color: var(--blue); }
       .mini-report-kpi .label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 900; }
       .mini-report-kpi .value { margin-top: 8px; font-size: 28px; font-weight: 950; }
-      .mini-report-kpi .hint { margin-top: 6px; font-size: 12px; color: #334155; }
+      .mini-report-kpi .hint { margin-top: 6px; font-size: 12px; color: #bfdbfe; }
       .mini-report-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr); gap: 14px; margin-bottom: 14px; }
-      .mini-report-panel { border: 1px solid var(--line); border-radius: 18px; background: #fbfdff; padding: 14px; }
+      .mini-report-panel { border: 1px solid var(--line); border-radius: 18px; background: rgba(2,6,23,.48); padding: 14px; }
       .mini-report-panel h4 { margin: 0 0 10px; font-size: 15px; }
       .mini-report-insights { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-      .mini-report-insights li { border: 1px solid var(--line); border-left: 5px solid var(--gray); border-radius: 14px; background: #fff; padding: 10px 12px; line-height: 1.45; }
+      .mini-report-insights li { border: 1px solid var(--line); border-left: 5px solid var(--gray); border-radius: 14px; background: rgba(2,6,23,.48); padding: 10px 12px; line-height: 1.45; }
       .mini-report-insights li.red { border-left-color: var(--red); } .mini-report-insights li.orange { border-left-color: var(--orange); } .mini-report-insights li.yellow { border-left-color: var(--yellow); } .mini-report-insights li.green { border-left-color: var(--green); } .mini-report-insights li.blue { border-left-color: var(--blue); } .mini-report-insights li.gray { border-left-color: var(--gray); }
       .mini-report-stats { display: grid; gap: 8px; }
-      .mini-report-stat { display: flex; justify-content: space-between; gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; background: #fff; }
+      .mini-report-stat { display: flex; justify-content: space-between; gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; background: rgba(2,6,23,.48); }
       .mini-report-stat span { color: var(--muted); font-size: 12px; font-weight: 800; display: block; }
       .mini-report-stat b { font-size: 14px; }
       .mini-report-sections { display: grid; gap: 12px; }
-      .mini-report-section { border: 1px solid var(--line); border-radius: 18px; background: #fff; padding: 14px; }
+      .mini-report-section { border: 1px solid var(--line); border-radius: 18px; background: rgba(2,6,23,.48); padding: 14px; }
       .mini-report-section-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 10px; }
       .mini-report-section-head h4 { margin: 0; font-size: 15px; }
       .mini-report-item-list { display: grid; gap: 10px; }
-      .mini-report-item { border: 1px solid var(--line); border-left: 5px solid var(--gray); border-radius: 14px; background: #fcfdff; padding: 12px; }
+      .mini-report-item { border: 1px solid var(--line); border-left: 5px solid var(--gray); border-radius: 14px; background: rgba(2,6,23,.56); padding: 12px; }
       .mini-report-item.red { border-left-color: var(--red); } .mini-report-item.orange { border-left-color: var(--orange); } .mini-report-item.yellow { border-left-color: var(--yellow); } .mini-report-item.green { border-left-color: var(--green); } .mini-report-item.blue { border-left-color: var(--blue); } .mini-report-item.gray { border-left-color: var(--gray); }
       .mini-report-item-top { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
       .mini-report-item-title { font-weight: 900; line-height: 1.35; }
@@ -1900,7 +2016,7 @@ function buildDigestItem(person, role, task, changes) {
     if (task.noDeadline && task.stale7) addFlag('Эскалация: задача без срока и без движения', 'red', 'gray', 5);
   } else if (isExecutorSide) {
     if (task.isWaitingControl) {
-      addFlag(`Передано на контроль ${task.waitingControlDays || 0} дн.`, 'info', 'gray', 90);
+      // Action-only правило: если исполнитель уже передал задачу на контроль, не показываем ему справочный шум.
     } else {
       if (task.overdue) addFlag(`Просрочено ${task.overdueDays} дн.`, 'red', 'red', 1);
       if (effectiveRiskScore >= 80) addFlag(`Красный риск ${effectiveRiskScore}`, 'red', 'red', 2);
@@ -2259,51 +2375,50 @@ function renderDynamic() {
     el('dynamicContent').innerHTML = '<p class="muted">Для динамики нужно минимум две выгрузки. Добавьте следующую выгрузку в data/raw/ и data/exports.json.</p>';
     return;
   }
-  const currentById = mapByStableId(state.tasks);
-  const prevById = mapByStableId(state.previousTasks);
-  const currentIds = new Set(Object.keys(currentById));
-  const prevIds = new Set(Object.keys(prevById));
-  const added = [...currentIds].filter(id => !prevIds.has(id)).map(id => currentById[id]);
-  const removed = [...prevIds].filter(id => !currentIds.has(id)).map(id => prevById[id]);
-  const newOverdue = [...currentIds].filter(id => prevIds.has(id) && currentById[id].overdue && !prevById[id].overdue).map(id => currentById[id]);
-  const becameControl = [...currentIds].filter(id => prevIds.has(id) && currentById[id].isWaitingControl && !prevById[id].isWaitingControl).map(id => currentById[id]);
-  const deadlineChanged = [...currentIds].filter(id => prevIds.has(id) && dateKey(currentById[id].deadline) !== dateKey(prevById[id].deadline)).map(id => currentById[id]);
-  const responsibleChanged = [...currentIds].filter(id => prevIds.has(id) && currentById[id].responsible !== prevById[id].responsible).map(id => currentById[id]);
-
+  const diff = compareTaskSnapshots(state.tasks, state.previousTasks);
+  const highSignalRows = buildMovementRows(diff).filter(row => {
+    const text = `${row.type || ''} ${row.detail || ''}`.toLowerCase();
+    return /просроч|контрол|срок|ответствен|риск|новая/.test(text) || row.riskScore >= settings.actionOnly.minRiskScore;
+  });
   const blocks = [
-    ['Новые задачи', added],
-    ['Исчезли из выгрузки', removed],
-    ['Новые просрочки', newOverdue],
-    ['Стали “Ждёт контроля”', becameControl],
-    ['Изменился срок', deadlineChanged],
-    ['Изменился ответственный', responsibleChanged]
+    ['Новые просрочки', diff.newOverdue.map(x => x.current), 'red'],
+    ['Перешли на контроль', diff.becameControl.map(x => x.current), 'blue'],
+    ['Изменился срок', diff.deadlineChanged.map(x => x.current), 'yellow'],
+    ['Изменился ответственный', diff.responsibleChanged.map(x => x.current), 'orange'],
+    ['Риск вырос', diff.riskUp.map(x => x.current), 'red'],
+    ['Просрочки сняты', diff.resolvedOverdue.map(x => x.current), 'green']
   ];
   el('dynamicContent').innerHTML = `
-    <div class="kpi-grid">${blocks.map(([label, rows]) => kpiHtml(label, rows.length, 'между соседними выгрузками', rows.length ? 'orange' : 'green')).join('')}</div>
-    ${blocks.map(([label, rows]) => `<h3>${escapeHtml(label)}</h3>${tableHtml(rows.slice(0, 50), [
-      ['Задача', t => `<div class="task-title">${escapeHtml(t.title)}</div>`],
-      ['Ответственный', t => escapeHtml(t.responsible)],
-      ['Проект', t => `<div class="project-name">${escapeHtml(t.project)}</div>`],
-      ['Статус', t => escapeHtml(t.status)],
-      ['Срок', t => formatDateTime(t.deadline)]
-    ])}`).join('')}`;
+    <p class="muted">Показываем только изменения, по которым есть управленческое действие. Статусный шум и мелкие перестановки скрыты.</p>
+    <div class="kpi-grid">${blocks.map(([label, rows, color]) => kpiHtml(label, rows.length, 'между соседними выгрузками', rows.length ? color : 'green')).join('')}</div>
+    <div class="report-panel report-panel-full">
+      <h3>Сигнальный журнал</h3>
+      ${tableHtml(highSignalRows.slice(0, settings.actionOnly.movementLimit), [
+        ['Событие', r => badge(r.type, r.color)],
+        ['Деталь', r => escapeHtml(r.detail)],
+        ['Кому писать', r => escapeHtml(getTaskEscalationOwners(mapByStableId(state.tasks)[String(r.id)] || r))],
+        ['Задача', r => `<div class="task-title">${escapeHtml(r.title)}</div><div class="small">ID: ${escapeHtml(r.id)}</div>`],
+        ['Проект', r => `<div class="project-name">${escapeHtml(r.project)}</div>`]
+      ])}
+    </div>`;
 }
 
 function renderAllTasks(tasks) {
-  const rows = [...tasks].sort((a, b) => b.riskScore - a.riskScore);
-  el('allTasksTable').innerHTML = tableHtml(rows, [
-    ['Риск', t => badge(t.riskLabel, t.riskColor) + `<div class="small">${t.riskScore}</div>`],
-    ['ID', t => escapeHtml(t.id)],
-    ['Задача', t => `<div class="task-title">${escapeHtml(t.title)}</div>`],
-    ['Кому писать', t => `${escapeHtml(getTaskEscalationOwners(t))}<div class="small">${escapeHtml(getTaskEscalationRoleLabel(t))}</div>`],
-    ['Кому мяч', t => `<div class="action">${escapeHtml(t.ballOwnerLabel)}</div>`],
-    ['Ответственный', t => escapeHtml(t.responsible)],
-    ['Проект', t => `<div class="project-name">${escapeHtml(t.project)}</div>`],
-    ['Статус', t => escapeHtml(t.status)],
-    ['Срок', t => formatDateTime(t.deadline)],
-    ['Активность', t => formatDateTime(t.lastActivity)],
-    ['Действие', t => `<div class="action">${escapeHtml(t.recommendedAction)}</div>`]
-  ]);
+  const rows = getActionQueueRows(tasks, { limit: 999 });
+  el('allTasksTable').innerHTML = `
+    <p class="muted">В этом разделе скрыты “зеленые” и справочные задачи. Показывается только action-only список: сигнал → кому писать → что сделать.</p>
+    ${tableHtml(rows, [
+      ['Сигнал', t => {
+        const c = getTaskActionCategory(t);
+        return badge(c.label, c.color) + `<div class="small">${escapeHtml(getTaskActionReason(t))}</div>`;
+      }],
+      ['Кому писать', t => `${escapeHtml(getTaskEscalationOwners(t))}<div class="small">${escapeHtml(getTaskEscalationRoleLabel(t))}</div>`],
+      ['Кому мяч', t => `<div class="action">${escapeHtml(t.ballOwnerLabel)}</div>`],
+      ['Что сделать', t => `<div class="action action-strong">${escapeHtml(getTaskNextAction(t))}</div>`],
+      ['Задача', t => `<div class="task-title">${escapeHtml(t.title)}</div><div class="small">ID: ${escapeHtml(t.id)} · ${escapeHtml(t.status || 'статус не указан')}</div>`],
+      ['Проект', t => `<div class="project-name">${escapeHtml(t.project)}</div>`],
+      ['Срок', t => formatDateTime(t.deadline) || 'нет срока']
+    ])}`;
 }
 
 function fillFilters() {
@@ -2350,12 +2465,12 @@ function barChartHtml(rows, labelKey, valueKey, title) {
 function exportCsv(kind) {
   const tasks = getFilteredTasks();
   let rows = [];
-  if (kind === 'push') rows = [...tasks].filter(t => t.riskScore > 0).sort((a, b) => b.riskScore - a.riskScore).map(taskCsvRow);
-  if (kind === 'all') rows = [...tasks].sort((a, b) => b.riskScore - a.riskScore).map(taskCsvRow);
-  if (kind === 'people') rows = summarizePeople(tasks).map(p => ({
+  if (kind === 'push') rows = getActionQueueRows(tasks, { limit: 999 }).map(taskCsvRow);
+  if (kind === 'all') rows = getActionQueueRows(tasks, { limit: 999 }).map(taskCsvRow);
+  if (kind === 'people') rows = summarizePeople(tasks).filter(hasPeopleActionSignal).map(p => ({
     responsible: p.responsible, total: p.total, control_shifted_to_author: p.controlShifted, overdue: p.overdue, due_today: p.dueToday, due_soon: p.dueSoon, no_deadline: p.noDeadline, stale_14: p.stale14, workload_score: p.workloadScore.toFixed(1), reliability_score: p.reliabilityScore, availability_score: p.availabilityScore, recommendation: p.recommendation
   }));
-  if (kind === 'projects') rows = summarizeProjects(tasks).map(p => ({
+  if (kind === 'projects') rows = summarizeProjects(tasks).filter(hasProjectActionSignal).map(p => ({
     project: p.project, total: p.total, overdue: p.overdue, due_today: p.dueToday, due_soon: p.dueSoon, waiting_control: p.waitingControl, no_deadline: p.noDeadline, stale_14: p.stale14, risk_score: p.riskScore, main_responsible: p.mainResponsible
   }));
   if (kind === 'hygiene') rows = buildHygieneIssues(tasks).map(i => ({ issue: i.issue, responsible: i.responsible, project: i.project, task: i.title, status: i.status, action: i.action }));

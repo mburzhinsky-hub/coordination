@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Контроль задач ИТО</title>
+  <title>ITO Mission Control</title>
   <link rel="stylesheet" href="assets/style.css" />
 </head>
 <body>
   <header class="topbar">
     <div>
-      <div class="eyebrow">Bitrix Task Control</div>
-      <h1>Контроль задач ИТО</h1>
-      <p>Пуш-лист, загрузка людей, риски проектов и гигиена задач из выгрузок Битрикс24.</p>
+      <div class="eyebrow">ITO / TASK OPS</div>
+      <h1>ITO Mission Control</h1>
+      <p>Action-only контроль задач: только конкретика, кому писать, кому мяч и следующее действие.</p>
     </div>
     <div class="header-actions">
       <label class="select-label">Выгрузка
@@ -31,9 +31,9 @@
     <section id="uploadReportCard" class="card upload-report">
       <div class="card-head report-head">
         <div>
-          <div class="section-eyebrow">Автоотчет после загрузки</div>
-          <h2>Что изменилось в задачах</h2>
-          <p class="muted">Сводка строится по текущей выгрузке и, если доступна предыдущая выгрузка, показывает движение задач между двумя срезами.</p>
+          <div class="section-eyebrow">Signal report</div>
+          <h2>Что требует действия</h2>
+          <p class="muted">Скрываем информационный шум и показываем только сигналы: просрочки, зависшую приемку, сроки, ответственных, высокий риск и новые управленческие изменения.</p>
         </div>
         <button class="button" data-export="report">Скачать отчет CSV</button>
       </div>
@@ -68,14 +68,14 @@
     </section>
 
     <nav class="tabs" aria-label="Разделы дашборда">
-      <button class="tab active" data-tab="today">Контроль сегодня</button>
-      <button class="tab" data-tab="people">Загрузка людей</button>
-      <button class="tab" data-tab="projects">Проекты</button>
+      <button class="tab active" data-tab="today">Mission Control</button>
+      <button class="tab" data-tab="people">Люди в фокусе</button>
+      <button class="tab" data-tab="projects">Проекты в фокусе</button>
       <button class="tab" data-tab="control">Ждёт контроля</button>
-      <button class="tab" data-tab="hygiene">Гигиена</button>
+      <button class="tab" data-tab="hygiene">Гигиена без шума</button>
       <button class="tab" data-tab="digests">Дайджесты</button>
       <button class="tab" data-tab="dynamic">Динамика</button>
-      <button class="tab" data-tab="all">Все задачи</button>
+      <button class="tab" data-tab="all">Action-only задачи</button>
       <button class="tab" data-tab="help">Как обновлять</button>
     </nav>
 
@@ -84,13 +84,13 @@
       <div class="grid-2">
         <div class="card">
           <div class="card-head">
-            <h2>Кого пушить сегодня</h2>
+            <h2>Кому писать и что сделать</h2>
             <button class="button" data-export="push">Скачать CSV</button>
           </div>
           <div id="pushList" class="table-wrap"></div>
         </div>
         <div class="card">
-          <h2>Кто доступен для новых задач</h2>
+          <h2>Коммуникации сегодня</h2>
           <div id="availablePeople" class="table-wrap"></div>
         </div>
       </div>
@@ -99,7 +99,7 @@
     <section id="tab-people" class="tab-panel">
       <div class="card">
         <div class="card-head">
-          <h2>Загрузка, надежность и доступность людей</h2>
+          <h2>Люди, где есть действие или риск</h2>
           <button class="button" data-export="people">Скачать CSV</button>
         </div>
         <div id="peopleSummary" class="summary-row"></div>
@@ -111,7 +111,7 @@
     <section id="tab-projects" class="tab-panel">
       <div class="card">
         <div class="card-head">
-          <h2>Риски по проектам и родительским задачам</h2>
+          <h2>Проекты с управленческим сигналом</h2>
           <button class="button" data-export="projects">Скачать CSV</button>
         </div>
         <div id="projectBars" class="bars"></div>
@@ -121,8 +121,8 @@
 
     <section id="tab-control" class="tab-panel">
       <div class="card">
-        <h2>Задачи в статусе “Ждёт контроля”</h2>
-        <p class="muted">Это отдельный управленческий inbox: принять, закрыть, вернуть или запросить уточнение.</p>
+        <h2>Приемка и контроль</h2>
+        <p class="muted">Показываем только кому сейчас мяч: постановщик, наблюдатели или управленческая эскалация.</p>
         <div id="controlTable" class="table-wrap"></div>
       </div>
     </section>
@@ -130,7 +130,7 @@
     <section id="tab-hygiene" class="tab-panel">
       <div class="card">
         <div class="card-head">
-          <h2>Гигиена задач</h2>
+          <h2>Гигиена без шума задач</h2>
           <button class="button" data-export="hygiene">Скачать CSV</button>
         </div>
         <div id="hygieneCards" class="kpi-grid"></div>
@@ -142,8 +142,8 @@
       <div class="card">
         <div class="card-head">
           <div>
-            <h2>Персональные ежедневные дайджесты</h2>
-            <p class="muted">Рабочие карточки без лишнего шума: только действие по роли, кому сейчас мяч, визуальный мини-отчет и готовые сообщения для чата, Битрикс24 или почты.</p>
+            <h2>Action-only дайджесты</h2>
+            <p class="muted">Только то, что человек реально должен сделать или проверить. Без справочных задач и зеленого шума.</p>
           </div>
           <div class="digest-actions">
             <button id="openDigestMiniReportBtn" class="button">Открыть мини-отчет</button>
@@ -192,7 +192,7 @@
 
     <section id="tab-dynamic" class="tab-panel">
       <div class="card">
-        <h2>Динамика между выгрузками</h2>
+        <h2>Сигнальная динамика</h2>
         <div id="dynamicContent"></div>
       </div>
     </section>
@@ -200,7 +200,7 @@
     <section id="tab-all" class="tab-panel">
       <div class="card">
         <div class="card-head">
-          <h2>Все задачи</h2>
+          <h2>Action-only задачи</h2>
           <button class="button" data-export="all">Скачать CSV</button>
         </div>
         <div id="allTasksTable" class="table-wrap"></div>
@@ -221,8 +221,8 @@
         </ol>
         <p class="muted">Задачи со статусом <b>Отложена</b>, проектные контейнеры и ежедневные служебные задачи исключаются из расчетов.</p>
         <h3>Персональные дайджесты</h3>
-        <p>Раздел <b>Дайджесты</b> строит готовые сообщения по ролям из выгрузки: ответственный, постановщик, соисполнитель, наблюдатель и руководитель отдела.</p>
-        <p>Для ежедневной работы используй режим <b>Красная зона, проверка и сегодня</b>. Внутри раздела есть карточки задач, счетчики по приоритетам, поле “кому сейчас мяч”, визуальный мини-отчет и готовые сообщения для пересылки.</p>
+        <p>Раздел <b>Дайджесты</b> работает в action-only логике: задача попадает человеку только если у него есть понятное действие по роли.</p>
+        <p>Для ежедневной работы используй режим <b>Красная зона, проверка и сегодня</b>. Внутри каждой карточки есть только четыре смысла: сигнал, кому писать, кому мяч и что сделать.</p>
         <p>Можно открыть <b>мини-отчет</b> в отдельном окне, отправить его через <b>Печать / PDF</b>, скачать как <b>HTML</b>, скопировать краткий или подробный текст, отдельную карточку задачи или скачать TXT-файл.</p>
         <p class="muted">Наблюдателям не показываются все задачи подряд: контроль подключается с 3-го дня, красная зона приемки — с 5-го дня. Дмитрий Храпугин видит управленческие эскалации отдела.</p>
         <h3>Как часто делать выгрузки</h3>
@@ -234,7 +234,7 @@
   </main>
 
   <footer>
-    <span>Статический дашборд. Работает на GitHub Pages без Streamlit, Python и серверной части.</span>
+    <span>ITO Mission Control · GitHub Pages · Action-only режим · без серверной части.</span>
   </footer>
 
   <script src="assets/app.js"></script>
