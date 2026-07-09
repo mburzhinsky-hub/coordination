@@ -29,6 +29,7 @@ const settings = {
   stale7Days: 7,
   stale14Days: 14,
   dueSoonDays: 3,
+  longWaitingControlDays: 3,
   workload: {
     active: 1,
     overdue: 2.5,
@@ -439,22 +440,32 @@ function normalizeTask(row, index, asOf, exportFile) {
   const staleDays = lastActivity ? Math.max(0, Math.floor((asOf - lastActivity) / 86400000)) : null;
   const stale7 = staleDays !== null && staleDays > settings.stale7Days;
   const stale14 = staleDays !== null && staleDays > settings.stale14Days;
+  const waitingControlDays = isWaitingControl && staleDays !== null ? staleDays : 0;
+  const isLongWaitingControl = isWaitingControl && waitingControlDays >= settings.longWaitingControlDays;
   const noParent = !parentTitle && !parentId;
   const overdueDays = overdue ? Math.max(0, Math.ceil((asOf - deadline) / 86400000)) : 0;
+  const controlEscalationOwners = unique([author, ...(observers || [])]).filter(Boolean);
+  const controlEscalationLabel = controlEscalationOwners.length ? controlEscalationOwners.join(', ') : 'Постановщик / наблюдатели';
 
   const task = {
     id, title, status, responsible, author, creator, coExecutors, observers, parentTitle, parentId, project,
     deadline, created, changed, closed, priority, estimate, spent, planned,
     exportFile, exportDate: asOf,
-    isCompleted, isWaitingControl, isInProgress, isDeferred, isProjectContainer, isIgnoredDaily, ignoreForDashboard,
+    isCompleted, isWaitingControl, isLongWaitingControl, isInProgress, isDeferred, isProjectContainer, isIgnoredDaily, ignoreForDashboard,
     noDeadline, overdue, overdueDays, dueToday, dueSoon, deadlineDeltaDays,
-    lastActivity, staleDays, stale7, stale14, noParent
+    lastActivity, staleDays, stale7, stale14, waitingControlDays, noParent,
+    controlEscalationOwners, controlEscalationLabel
   };
 
   const risk = calculateRisk(task);
   task.riskScore = risk.score;
   task.riskColor = risk.color;
   task.riskLabel = risk.label;
+  const responsibleRisk = calculateResponsibleRisk(task, risk);
+  task.responsibleRiskScore = responsibleRisk.score;
+  task.responsibleRiskColor = responsibleRisk.color;
+  task.responsibleRiskLabel = responsibleRisk.label;
+  task.controlShiftedFromResponsible = task.isLongWaitingControl;
   task.recommendedAction = recommendAction(task);
   task.systemComment = buildSystemComment(task);
   return task;
@@ -479,7 +490,31 @@ function calculateRisk(task) {
   return { score, color: 'green', label: 'Зеленый' };
 }
 
+function calculateResponsibleRisk(task, globalRisk) {
+  if (!task.isLongWaitingControl) return { ...globalRisk };
+  return { score: 0, color: 'green', label: 'Зеленый' };
+}
+
+function shouldShiftControlToAuthor(task) {
+  return Boolean(task && task.isLongWaitingControl);
+}
+
+function responsibleOwnsTaskRisk(task) {
+  return !shouldShiftControlToAuthor(task);
+}
+
+function getTaskEscalationOwners(task) {
+  if (!shouldShiftControlToAuthor(task)) return task.responsible || 'Не указан';
+  return task.controlEscalationLabel || 'Постановщик / наблюдатели';
+}
+
+function getTaskEscalationRoleLabel(task) {
+  if (!shouldShiftControlToAuthor(task)) return 'Ответственный';
+  return `Постановщик / наблюдатели · на контроле ${task.waitingControlDays || 0} дн.`;
+}
+
 function recommendAction(task) {
+  if (task.isLongWaitingControl) return `Эскалировать постановщику / наблюдателям: задача на контроле ${task.waitingControlDays} дн., нужно принять или вернуть`;
   if (task.overdue) return 'Запросить результат, блокер или новый срок';
   if (task.isWaitingControl) return 'Проверить результат и закрыть или вернуть на доработку';
   if (task.noDeadline) return 'Назначить крайний срок';
@@ -492,6 +527,7 @@ function recommendAction(task) {
 
 function buildSystemComment(task) {
   const parts = [];
+  if (task.isLongWaitingControl) parts.push(`контроль завис ${task.waitingControlDays} дн.; красная зона перенесена на постановщика / наблюдателей`);
   if (task.overdue) parts.push(`просрочено ${task.overdueDays} дн.`);
   if (task.noDeadline) parts.push('нет срока');
   if (task.stale14) parts.push(`нет активности ${task.staleDays} дн.`);
@@ -564,6 +600,7 @@ function renderUploadReport() {
       ${reportMetricHtml('Новые просрочки', report.diff.newOverdue.length, null, 'Стали просроченными между срезами', report.diff.newOverdue.length ? 'red' : 'green')}
       ${reportMetricHtml('Просрочки сняты', report.diff.resolvedOverdue.length, null, 'Были просрочены, теперь нет', report.diff.resolvedOverdue.length ? 'green' : 'gray')}
       ${reportMetricHtml('Ждёт контроля', report.metrics.waitingControl, reportDelta(report, 'waitingControl'), 'Нужно принять или вернуть', report.metrics.waitingControl ? 'blue' : 'green')}
+      ${reportMetricHtml(`Контроль > ${settings.longWaitingControlDays} дн.`, report.metrics.longWaitingControl, reportDelta(report, 'longWaitingControl'), 'Эскалация постановщику', report.metrics.longWaitingControl ? 'red' : 'green')}
       ${reportMetricHtml('Красный/оранжевый риск', report.metrics.highRisk, reportDelta(report, 'highRisk'), 'Задачи с риском 50+', report.metrics.highRisk ? 'orange' : 'green')}
       ${reportMetricHtml('Без срока', report.metrics.noDeadline, reportDelta(report, 'noDeadline'), 'Нужно назначить дедлайн', report.metrics.noDeadline ? 'gray' : 'green')}
       ${reportMetricHtml('Средний риск', report.metrics.avgRisk, reportDelta(report, 'avgRisk'), 'Средний индекс риска', riskColor(report.metrics.avgRisk), 'neutral')}
@@ -579,6 +616,7 @@ function renderUploadReport() {
         ${tableHtml(report.topRiskTasks, [
           ['Риск', t => badge(t.riskLabel, t.riskColor) + `<div class="small">${t.riskScore}</div>`],
           ['Задача', t => `<div class="task-title">${escapeHtml(t.title)}</div>`],
+          ['Кому писать', t => `${escapeHtml(getTaskEscalationOwners(t))}<div class="small">${escapeHtml(getTaskEscalationRoleLabel(t))}</div>`],
           ['Ответственный', t => escapeHtml(t.responsible)],
           ['Срок', t => formatDateTime(t.deadline)],
           ['Действие', t => escapeHtml(t.recommendedAction)]
@@ -593,6 +631,7 @@ function renderUploadReport() {
           ['Ответственный', p => escapeHtml(p.responsible)],
           ['Всего', p => formatDeltaValue(p.total, p.totalDelta)],
           ['Просрочено', p => formatDeltaValue(p.overdue, p.overdueDelta, true)],
+          ['Контроль у постановщика', p => formatDeltaValue(p.controlShifted || 0, p.controlShiftedDelta || 0, true)],
           ['Загрузка', p => `${p.workloadScore.toFixed(1)}<div class="small">${escapeHtml(p.workloadCategory)}</div>`],
           ['Доступность', p => badge(p.availabilityCategory, p.availabilityColor) + `<div class="small">${p.availabilityScore}</div>`],
           ['Рекомендация', p => escapeHtml(p.recommendation)]
@@ -657,6 +696,7 @@ function buildMetricSnapshot(tasks) {
     dueToday: count(tasks, t => t.dueToday),
     dueSoon: count(tasks, t => t.dueSoon),
     waitingControl: count(tasks, t => t.isWaitingControl),
+    longWaitingControl: count(tasks, t => t.isLongWaitingControl),
     noDeadline: count(tasks, t => t.noDeadline),
     stale14: count(tasks, t => t.stale14),
     redRisk: count(tasks, t => t.riskColor === 'red'),
@@ -729,6 +769,7 @@ function buildReportPeopleRows(current, previous) {
       ...p,
       totalDelta: p.total - (prev.total || 0),
       overdueDelta: p.overdue - (prev.overdue || 0),
+      controlShiftedDelta: (p.controlShifted || 0) - (prev.controlShifted || 0),
       workloadDelta: p.workloadScore - (prev.workloadScore || 0),
       availabilityDelta: p.availabilityScore - (prev.availabilityScore || 0)
     };
@@ -779,6 +820,7 @@ function buildReportInsights(report) {
     insights.push({ color: worstProject.overdue ? 'red' : 'orange', text: `Главная зона внимания по проектам: ${worstProject.project} — просрочек ${worstProject.overdue}, риск ${worstProject.riskScore}.` });
   }
 
+  if (m.longWaitingControl) insights.push({ color: 'red', text: `Задач, зависших на контроле дольше ${settings.longWaitingControlDays} дн.: ${m.longWaitingControl}. Красная зона перенесена с исполнителей на постановщиков / наблюдателей.` });
   if (m.noDeadline) insights.push({ color: 'gray', text: `Задач без срока: ${m.noDeadline}. Это снижает управляемость и искажает прогноз загрузки.` });
   if (m.stale14) insights.push({ color: 'orange', text: `Зависших без активности больше 14 дней: ${m.stale14}. Нужен запрос актуального статуса.` });
 
@@ -881,6 +923,7 @@ function renderKpis(tasks) {
     ['Срок сегодня', count(tasks, t => t.dueToday), 'Проверить готовность', 'orange'],
     ['Ближайшие 3 дня', count(tasks, t => t.dueSoon), 'Профилактика срыва', 'yellow'],
     ['Ждёт контроля', count(tasks, t => t.isWaitingControl), 'Принять / вернуть', 'blue'],
+    [`Контроль > ${settings.longWaitingControlDays} дн.`, count(tasks, t => t.isLongWaitingControl), 'Эскалация постановщику', 'red'],
     ['Без срока', count(tasks, t => t.noDeadline), 'Нужно назначить дедлайн', 'gray'],
     ['Нет активности > 14 дн.', count(tasks, t => t.stale14), 'Зависшие задачи', 'gray'],
     ['Без родителя', count(tasks, t => t.noParent), 'Нет проектной привязки', 'gray'],
@@ -898,6 +941,7 @@ function renderPushList(tasks) {
   el('pushList').innerHTML = tableHtml(rows, [
     ['Риск', t => badge(t.riskLabel, t.riskColor) + `<div class="small">${t.riskScore}</div>`],
     ['Действие', t => `<div class="action">${escapeHtml(t.recommendedAction)}</div>`],
+    ['Кому писать', t => `${escapeHtml(getTaskEscalationOwners(t))}<div class="small">${escapeHtml(getTaskEscalationRoleLabel(t))}</div>`],
     ['Ответственный', t => escapeHtml(t.responsible)],
     ['Проект', t => `<div class="project-name">${escapeHtml(t.project)}</div>`],
     ['Задача', t => `<div class="task-title">${escapeHtml(t.title)}</div><div class="small">ID: ${escapeHtml(t.id)}</div>`],
@@ -938,6 +982,7 @@ function renderPeople(tasks) {
     ['В работе', p => p.inProgress],
     ['Ждёт вып.', p => p.waiting],
     ['Ждёт контроля', p => p.waitingControl],
+    ['Контроль у постановщика', p => badge(String(p.controlShifted), p.controlShifted ? 'blue' : 'green')],
     ['Просрочено', p => badge(String(p.overdue), p.overdue ? 'red' : 'green')],
     ['Сегодня', p => p.dueToday],
     ['3 дня', p => p.dueSoon],
@@ -954,20 +999,22 @@ function summarizePeople(tasks) {
   const groups = groupBy(tasks, t => t.responsible || 'Не указан');
   return Object.entries(groups).map(([responsible, rows]) => {
     const total = rows.length;
-    const overdue = count(rows, t => t.overdue);
-    const dueToday = count(rows, t => t.dueToday);
-    const dueSoon = count(rows, t => t.dueSoon);
+    const ownedRows = rows.filter(responsibleOwnsTaskRisk);
+    const overdue = count(ownedRows, t => t.overdue);
+    const dueToday = count(ownedRows, t => t.dueToday);
+    const dueSoon = count(ownedRows, t => t.dueSoon);
     const inProgress = count(rows, t => t.isInProgress);
     const waitingControl = count(rows, t => t.isWaitingControl);
-    const noDeadline = count(rows, t => t.noDeadline);
-    const stale14 = count(rows, t => t.stale14);
-    const stale7 = count(rows, t => t.stale7);
+    const controlShifted = count(rows, t => t.isLongWaitingControl);
+    const noDeadline = count(ownedRows, t => t.noDeadline);
+    const stale14 = count(ownedRows, t => t.stale14);
+    const stale7 = count(ownedRows, t => t.stale7);
     const waiting = count(rows, t => /жд.т выполн|ждет выполн|ждёт выполн/i.test(t.status));
     const projectTasks = count(rows, t => !t.noParent);
     const nonProjectTasks = total - projectTasks;
-    const avgOverdue = overdue ? avg(rows.filter(t => t.overdue).map(t => t.overdueDays)) : 0;
-    const maxOverdue = Math.max(0, ...rows.map(t => t.overdueDays || 0));
-    const risky = count(rows, t => t.riskScore >= 50);
+    const avgOverdue = overdue ? avg(ownedRows.filter(t => t.overdue).map(t => t.overdueDays)) : 0;
+    const maxOverdue = Math.max(0, ...ownedRows.map(t => t.overdueDays || 0));
+    const risky = count(ownedRows, t => (t.responsibleRiskScore ?? t.riskScore) >= 50);
 
     const workloadScore = total * settings.workload.active
       + overdue * settings.workload.overdue
@@ -995,7 +1042,7 @@ function summarizePeople(tasks) {
     const availabilityColor = availabilityScore >= 75 ? 'green' : availabilityScore >= 55 ? 'yellow' : availabilityScore >= 35 ? 'orange' : 'red';
     const recommendation = buildPeopleRecommendation({ availabilityScore, overdue, noDeadline, stale14, workloadScore, dueToday, dueSoon });
 
-    return { responsible, total, inProgress, waiting, waitingControl, overdue, dueToday, dueSoon, noDeadline, stale7, stale14, projectTasks, nonProjectTasks, avgOverdue, maxOverdue, risky, workloadScore, workloadCategory, reliabilityScore, reliabilityCategory, availabilityScore, availabilityCategory, availabilityColor, recommendation };
+    return { responsible, total, inProgress, waiting, waitingControl, controlShifted, overdue, dueToday, dueSoon, noDeadline, stale7, stale14, projectTasks, nonProjectTasks, avgOverdue, maxOverdue, risky, workloadScore, workloadCategory, reliabilityScore, reliabilityCategory, availabilityScore, availabilityCategory, availabilityColor, recommendation };
   }).sort((a, b) => b.workloadScore - a.workloadScore || b.overdue - a.overdue);
 }
 
@@ -1052,11 +1099,12 @@ function renderControl(tasks) {
     ['Риск', t => badge(t.riskLabel, t.riskColor)],
     ['Задача', t => `<div class="task-title">${escapeHtml(t.title)}</div>`],
     ['Проект', t => `<div class="project-name">${escapeHtml(t.project)}</div>`],
-    ['Ответственный', t => escapeHtml(t.responsible)],
+    ['Кому писать', t => `${escapeHtml(getTaskEscalationOwners(t))}<div class="small">${escapeHtml(getTaskEscalationRoleLabel(t))}</div>`],
+    ['Ответственный', t => `${escapeHtml(t.responsible)}${t.isLongWaitingControl ? '<div class="small">снято с красной зоны исполнителя</div>' : ''}`],
     ['Постановщик', t => escapeHtml(t.author)],
     ['Срок', t => formatDateTime(t.deadline)],
     ['Последнее изменение', t => formatDateTime(t.changed)],
-    ['Действие', t => 'Проверить результат и закрыть или вернуть на доработку']
+    ['Действие', t => t.isLongWaitingControl ? 'Постановщику / наблюдателям принять или вернуть результат' : 'Проверить результат и закрыть или вернуть на доработку']
   ]);
 }
 
@@ -1722,22 +1770,32 @@ function buildDigestItem(person, role, task, changes) {
   const addFlag = (text, category, color, priority) => flags.push({ text, category, color, priority });
   const isObserver = role === 'observer';
   const isAuthor = role === 'author';
-  const highRisk = task.riskScore >= settings.digest.highRiskScore;
-  const redRisk = task.riskScore >= 80;
+  const isExecutorSide = role === 'responsible' || role === 'coExecutor';
+  const isControlSide = isAuthor || isObserver;
+  const controlShifted = task.isLongWaitingControl;
+  const effectiveRiskScore = controlShifted && isExecutorSide ? (task.responsibleRiskScore ?? 0) : task.riskScore;
+  const highRisk = effectiveRiskScore >= settings.digest.highRiskScore;
+  const redRisk = effectiveRiskScore >= 80;
   const deadlineDays = task.deadlineDeltaDays;
 
-  if (task.overdue) addFlag(`Просрочено ${task.overdueDays} дн.`, 'red', 'red', 1);
-  if (redRisk) addFlag(`Красный риск ${task.riskScore}`, 'red', 'red', 2);
-  else if (highRisk && !isObserver) addFlag(`Высокий риск ${task.riskScore}`, 'red', 'orange', 3);
+  if (controlShifted && isControlSide) {
+    addFlag(`Контроль завис ${task.waitingControlDays} дн.`, 'red', 'red', 1);
+  }
 
-  if (!isObserver && task.dueToday) addFlag('Срок сегодня', 'today', 'orange', 4);
-  if ((isAuthor || role === 'responsible') && task.isWaitingControl) addFlag('Ждёт контроля', 'today', 'blue', 5);
-  if (isObserver && task.isWaitingControl && highRisk) addFlag('Критичная задача ждёт контроля', 'today', 'blue', 5);
-  if (!isObserver && task.dueSoon && !task.dueToday && !task.overdue) addFlag(`Срок в ближайшие ${settings.digest.dueSoonDays} дн.${deadlineDays !== null ? ` (${deadlineDays} дн.)` : ''}`, 'soon', 'yellow', 6);
-  if (!isObserver && task.noDeadline) addFlag('Нет крайнего срока', 'hygiene', 'gray', 7);
-  if (!isObserver && task.staleDays !== null && task.staleDays > settings.digest.staleDays) addFlag(`Нет активности ${task.staleDays} дн.`, 'hygiene', 'gray', 8);
+  if (!controlShifted || !isExecutorSide) {
+    if (task.overdue) addFlag(`Просрочено ${task.overdueDays} дн.`, 'red', 'red', 1);
+    if (redRisk) addFlag(`Красный риск ${effectiveRiskScore}`, 'red', 'red', 2);
+    else if (highRisk && !isObserver) addFlag(`Высокий риск ${effectiveRiskScore}`, 'red', 'orange', 3);
+  }
 
-  if (!isObserver && changes.length) {
+  if (!isObserver && !controlShifted && task.dueToday) addFlag('Срок сегодня', 'today', 'orange', 4);
+  if ((isAuthor || role === 'responsible') && task.isWaitingControl && (!controlShifted || isAuthor)) addFlag('Ждёт контроля', controlShifted && isAuthor ? 'red' : 'today', controlShifted && isAuthor ? 'red' : 'blue', 5);
+  if (isObserver && task.isWaitingControl && (highRisk || controlShifted)) addFlag(controlShifted ? `Задача зависла на контроле ${task.waitingControlDays} дн.` : 'Критичная задача ждёт контроля', controlShifted ? 'red' : 'today', controlShifted ? 'red' : 'blue', 5);
+  if (!isObserver && !controlShifted && task.dueSoon && !task.dueToday && !task.overdue) addFlag(`Срок в ближайшие ${settings.digest.dueSoonDays} дн.${deadlineDays !== null ? ` (${deadlineDays} дн.)` : ''}`, 'soon', 'yellow', 6);
+  if (!isObserver && !controlShifted && task.noDeadline) addFlag('Нет крайнего срока', 'hygiene', 'gray', 7);
+  if (!isObserver && !controlShifted && task.staleDays !== null && task.staleDays > settings.digest.staleDays) addFlag(`Нет активности ${task.staleDays} дн.`, 'hygiene', 'gray', 8);
+
+  if (!isObserver && changes.length && (!controlShifted || !isExecutorSide)) {
     changes.slice(0, 3).forEach(change => addFlag(change.text, 'changes', change.color || 'blue', 9));
   }
 
@@ -1762,6 +1820,14 @@ function buildDigestItem(person, role, task, changes) {
 
 function buildDigestAction(task, role, flags) {
   const flagText = flags.map(flag => flag.text).join(' ').toLowerCase();
+
+  if (task.isLongWaitingControl && (role === 'author' || role === 'observer')) {
+    return `Принять результат или вернуть на доработку: задача на контроле ${task.waitingControlDays} дн.`;
+  }
+
+  if (task.isLongWaitingControl && (role === 'responsible' || role === 'coExecutor')) {
+    return 'Информационно: красная зона по зависшему контролю перенесена на постановщика / наблюдателей.';
+  }
 
   if (role === 'responsible') {
     if (task.overdue) return 'Дать результат, блокер или новый реалистичный срок. Обновить комментарий в задаче.';
@@ -2066,6 +2132,7 @@ function renderAllTasks(tasks) {
     ['Риск', t => badge(t.riskLabel, t.riskColor) + `<div class="small">${t.riskScore}</div>`],
     ['ID', t => escapeHtml(t.id)],
     ['Задача', t => `<div class="task-title">${escapeHtml(t.title)}</div>`],
+    ['Кому писать', t => `${escapeHtml(getTaskEscalationOwners(t))}<div class="small">${escapeHtml(getTaskEscalationRoleLabel(t))}</div>`],
     ['Ответственный', t => escapeHtml(t.responsible)],
     ['Проект', t => `<div class="project-name">${escapeHtml(t.project)}</div>`],
     ['Статус', t => escapeHtml(t.status)],
@@ -2122,7 +2189,7 @@ function exportCsv(kind) {
   if (kind === 'push') rows = [...tasks].filter(t => t.riskScore > 0).sort((a, b) => b.riskScore - a.riskScore).map(taskCsvRow);
   if (kind === 'all') rows = [...tasks].sort((a, b) => b.riskScore - a.riskScore).map(taskCsvRow);
   if (kind === 'people') rows = summarizePeople(tasks).map(p => ({
-    responsible: p.responsible, total: p.total, overdue: p.overdue, due_today: p.dueToday, due_soon: p.dueSoon, no_deadline: p.noDeadline, stale_14: p.stale14, workload_score: p.workloadScore.toFixed(1), reliability_score: p.reliabilityScore, availability_score: p.availabilityScore, recommendation: p.recommendation
+    responsible: p.responsible, total: p.total, control_shifted_to_author: p.controlShifted, overdue: p.overdue, due_today: p.dueToday, due_soon: p.dueSoon, no_deadline: p.noDeadline, stale_14: p.stale14, workload_score: p.workloadScore.toFixed(1), reliability_score: p.reliabilityScore, availability_score: p.availabilityScore, recommendation: p.recommendation
   }));
   if (kind === 'projects') rows = summarizeProjects(tasks).map(p => ({
     project: p.project, total: p.total, overdue: p.overdue, due_today: p.dueToday, due_soon: p.dueSoon, waiting_control: p.waitingControl, no_deadline: p.noDeadline, stale_14: p.stale14, risk_score: p.riskScore, main_responsible: p.mainResponsible
@@ -2138,6 +2205,9 @@ function taskCsvRow(t) {
     risk_score: t.riskScore,
     risk: t.riskLabel,
     action: t.recommendedAction,
+    escalation_to: getTaskEscalationOwners(t),
+    escalation_role: getTaskEscalationRoleLabel(t),
+    control_shifted_from_responsible: t.isLongWaitingControl ? 'yes' : 'no',
     responsible: t.responsible,
     project: t.project,
     title: t.title,
