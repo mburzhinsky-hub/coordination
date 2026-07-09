@@ -64,7 +64,8 @@ const settings = {
     peopleIssueLimit: 15,
     projectIssueLimit: 15,
     pushLimit: 60,
-    movementLimit: 40
+    movementLimit: 40,
+    coordinatorLimit: 8
   }
 };
 
@@ -613,6 +614,7 @@ function buildSystemComment(task) {
 function renderAll() {
   renderUploadReport();
   const tasks = getFilteredTasks();
+  renderCoordinatorBrief(tasks);
   renderKpis(tasks);
   renderPushList(tasks);
   renderPeople(tasks);
@@ -731,6 +733,131 @@ function getCommunicationRows(tasks) {
     topAction: getTaskNextAction(rows[0]),
     role: getTaskEscalationRoleLabel(rows[0])
   })).sort((a, b) => b.red - a.red || b.check - a.check || b.total - a.total || a.owner.localeCompare(b.owner));
+}
+
+function getCoordinatorActionMeta(task) {
+  if (task.isLongWaitingControl) return { verb: 'Пнуть', badge: 'Приемка зависла', color: 'red', priority: 1, ask: 'Попросить принять, вернуть или закрыть задачу сегодня' };
+  if (task.overdue && !task.isWaitingControl) return { verb: 'Пнуть', badge: 'Просрочка', color: 'red', priority: 2, ask: 'Попросить результат, блокер или новый срок' };
+  if (task.isWaitingControl) return { verb: 'Напомнить', badge: 'Нужно проверить', color: 'blue', priority: 3, ask: 'Напомнить проверить результат и принять решение' };
+  if (task.dueToday) return { verb: 'Напомнить', badge: 'Срок сегодня', color: 'orange', priority: 4, ask: 'Подтвердить готовность до конца дня' };
+  if (task.stale14) return { verb: 'Запросить', badge: 'Нет движения', color: 'yellow', priority: 5, ask: 'Запросить актуальный статус и следующий шаг' };
+  if (task.noDeadline) return { verb: 'Попросить', badge: 'Нет срока', color: 'gray', priority: 6, ask: 'Попросить поставить крайний срок' };
+  if (task.riskScore >= settings.actionOnly.minRiskScore) return { verb: 'Разобрать', badge: 'Высокий риск', color: 'orange', priority: 7, ask: 'Разобрать причину риска и план снижения' };
+  if (task.dueSoon) return { verb: 'Предупредить', badge: 'Срок скоро', color: 'yellow', priority: 8, ask: 'Уточнить, нужен ли резерв по сроку' };
+  return { verb: 'Проверить', badge: 'Требует внимания', color: 'gray', priority: 99, ask: getTaskNextAction(task) };
+}
+
+function buildCoordinatorActionRows(tasks) {
+  const queue = getActionQueueRows(tasks, { limit: 999 });
+  const groups = groupBy(queue, task => getTaskEscalationOwners(task));
+  return Object.entries(groups).map(([owner, rows]) => {
+    const sorted = [...rows].sort((a, b) => {
+      const ma = getCoordinatorActionMeta(a);
+      const mb = getCoordinatorActionMeta(b);
+      return ma.priority - mb.priority
+        || b.riskScore - a.riskScore
+        || b.overdueDays - a.overdueDays
+        || b.waitingControlDays - a.waitingControlDays;
+    });
+    const topTask = sorted[0];
+    const meta = getCoordinatorActionMeta(topTask);
+    const reasons = [...new Set(sorted.slice(0, 3).map(getTaskActionReason))];
+    const tasksPreview = sorted.slice(0, 3).map(task => ({
+      id: task.id,
+      title: task.title,
+      project: task.project,
+      reason: getTaskActionReason(task)
+    }));
+    const roleLabels = [...new Set(sorted.slice(0, 4).map(getTaskEscalationRoleLabel))];
+    return {
+      owner,
+      total: sorted.length,
+      red: count(sorted, t => getTaskActionCategory(t).color === 'red'),
+      check: count(sorted, t => t.isWaitingControl),
+      today: count(sorted, t => t.dueToday),
+      overdue: count(sorted, t => t.overdue && !t.isWaitingControl),
+      noDeadline: count(sorted, t => t.noDeadline),
+      stale: count(sorted, t => t.stale14),
+      meta,
+      topTask,
+      tasksPreview,
+      reasons,
+      roleLabel: roleLabels[0] || '',
+      ballOwner: topTask.ballOwnerLabel || '',
+      ask: meta.ask,
+      summary: `${meta.verb} ${owner}: ${reasons[0] || getTaskActionReason(topTask)}`
+    };
+  }).sort((a, b) => a.meta.priority - b.meta.priority || b.red - a.red || b.total - a.total || a.owner.localeCompare(b.owner)).slice(0, settings.actionOnly.coordinatorLimit);
+}
+
+function renderCoordinatorBrief(tasks) {
+  const target = el('coordinatorBrief');
+  if (!target) return;
+  const rows = buildCoordinatorActionRows(tasks);
+  if (!rows.length) {
+    target.innerHTML = '<div class="status-box">Сегодня критичных координационных действий нет: можно работать по обычному ритму и следить только за новыми сигналами.</div>';
+    return;
+  }
+
+  const counts = {
+    nudge: count(rows, r => r.meta.verb === 'Пнуть'),
+    remind: count(rows, r => r.meta.verb === 'Напомнить'),
+    request: count(rows, r => ['Запросить', 'Попросить'].includes(r.meta.verb)),
+    red: count(rows, r => r.meta.color === 'red')
+  };
+
+  target.innerHTML = `
+    <div class="coordinator-summary-row">
+      <div class="coordinator-priority-line">
+        <span class="coordinator-priority-label">Приоритет дня</span>
+        <strong>${escapeHtml(rows[0].summary)}</strong>
+        <span class="small">${escapeHtml(rows[0].ballOwner)}</span>
+      </div>
+      <div class="summary-row coordinator-summary-pills">
+        <span class="summary-pill">Адресатов: ${rows.length}</span>
+        <span class="summary-pill">Пнуть: ${counts.nudge}</span>
+        <span class="summary-pill">Напомнить: ${counts.remind}</span>
+        <span class="summary-pill">Запросить / попросить: ${counts.request}</span>
+        <span class="summary-pill">Красная зона: ${counts.red}</span>
+      </div>
+    </div>
+    <div class="coordinator-card-grid">
+      ${rows.map((row, index) => `
+        <article class="coordinator-card ${escapeAttr(row.meta.color)}">
+          <div class="coordinator-card-top">
+            <div>
+              <div class="coordinator-rank">Шаг ${index + 1}</div>
+              <div class="coordinator-owner">${escapeHtml(row.owner)}</div>
+              <div class="coordinator-role">${escapeHtml(row.roleLabel)}</div>
+            </div>
+            <div class="coordinator-badges">
+              ${badge(row.meta.badge, row.meta.color)}
+              ${row.red ? badge(`Красных ${row.red}`, 'red') : ''}
+              ${row.check ? badge(`Проверка ${row.check}`, 'blue') : ''}
+            </div>
+          </div>
+          <div class="coordinator-card-body">
+            <div class="coordinator-ask"><span>${escapeHtml(row.meta.verb)}</span><b>${escapeHtml(row.ask)}</b></div>
+            <div class="coordinator-reason">Почему сейчас: ${escapeHtml(row.reasons.join(' · '))}</div>
+            <div class="coordinator-meta-grid">
+              <div><span>Кому мяч</span><b>${escapeHtml(row.ballOwner || 'не определено')}</b></div>
+              <div><span>Всего задач</span><b>${row.total}</b></div>
+              <div><span>Просрочки</span><b>${row.overdue}</b></div>
+              <div><span>Сегодня</span><b>${row.today}</b></div>
+            </div>
+            <div class="coordinator-task-list">
+              ${row.tasksPreview.map(task => `
+                <div class="coordinator-task-item">
+                  <b>[${escapeHtml(task.id)}] ${escapeHtml(task.title)}</b>
+                  <span>${escapeHtml(task.project || 'Без проекта')} · ${escapeHtml(task.reason)}</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        </article>
+      `).join('')}
+    </div>
+  `;
 }
 
 function hasPeopleActionSignal(person) {
