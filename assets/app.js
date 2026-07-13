@@ -22,6 +22,16 @@ const state = {
     role: '',
     scope: 'urgent',
     format: 'brief'
+  },
+  gantt: {
+    focus: 'active',
+    groupBy: 'project',
+    sort: 'risk',
+    range: '90',
+    compact: false,
+    selectedTaskId: '',
+    collapsedGroups: [],
+    centerOnToday: true
   }
 };
 
@@ -201,7 +211,64 @@ function bindUi() {
   const downloadDigestMiniReportHtmlBtn = el('downloadDigestMiniReportHtmlBtn');
   if (downloadDigestMiniReportHtmlBtn) downloadDigestMiniReportHtmlBtn.addEventListener('click', downloadCurrentDigestMiniReportHtml);
 
+  ['ganttFocus', 'ganttGroupBy', 'ganttSort'].forEach(id => {
+    const node = el(id);
+    if (!node) return;
+    node.addEventListener('change', () => {
+      if (id === 'ganttFocus') state.gantt.focus = node.value;
+      if (id === 'ganttGroupBy') state.gantt.groupBy = node.value;
+      if (id === 'ganttSort') state.gantt.sort = node.value;
+      state.gantt.collapsedGroups = [];
+      renderGantt(getFilteredTasks());
+    });
+  });
+
+  document.querySelectorAll('[data-gantt-range]').forEach(button => {
+    button.addEventListener('click', () => {
+      state.gantt.range = button.dataset.ganttRange || '90';
+      state.gantt.centerOnToday = true;
+      renderGantt(getFilteredTasks());
+    });
+  });
+
+  const ganttTodayBtn = el('ganttTodayBtn');
+  if (ganttTodayBtn) ganttTodayBtn.addEventListener('click', scrollGanttToToday);
+
+  const ganttDensityBtn = el('ganttDensityBtn');
+  if (ganttDensityBtn) ganttDensityBtn.addEventListener('click', () => {
+    state.gantt.compact = !state.gantt.compact;
+    ganttDensityBtn.textContent = state.gantt.compact ? 'Обычный вид' : 'Компактный вид';
+    renderGantt(getFilteredTasks());
+  });
+
   document.addEventListener('click', event => {
+    const rangeButton = event.target.closest('[data-gantt-range]');
+    if (rangeButton) return;
+
+    const ganttMetric = event.target.closest('[data-gantt-focus]');
+    if (ganttMetric) {
+      state.gantt.focus = ganttMetric.dataset.ganttFocus || 'active';
+      const focusSelect = el('ganttFocus');
+      if (focusSelect) focusSelect.value = state.gantt.focus;
+      renderGantt(getFilteredTasks());
+      return;
+    }
+
+    const ganttGroup = event.target.closest('[data-gantt-group]');
+    if (ganttGroup) {
+      const key = ganttGroup.dataset.ganttGroup || '';
+      const collapsed = new Set(state.gantt.collapsedGroups);
+      collapsed.has(key) ? collapsed.delete(key) : collapsed.add(key);
+      state.gantt.collapsedGroups = [...collapsed];
+      renderGantt(getFilteredTasks());
+      return;
+    }
+
+    const ganttTask = event.target.closest('[data-gantt-task-id]');
+    if (ganttTask) {
+      selectGanttTask(ganttTask.dataset.ganttTaskId || '');
+      return;
+    }
     const copyTaskButton = event.target.closest('[data-copy-digest-task]');
     if (copyTaskButton) {
       copyDigestTask(copyTaskButton.dataset.copyDigestTask || '');
@@ -264,6 +331,8 @@ async function loadExport(fileName) {
 
     const text = await fetchExportText(fileName);
     state.tasks = normalizeRows(parseBitrixHtmlExport(text), state.exportDate, fileName);
+    state.gantt.centerOnToday = true;
+    state.gantt.selectedTaskId = '';
     state.ignoredCount = state.tasks.ignoredCount || 0;
     state.allRows = [...state.tasks];
 
@@ -441,6 +510,9 @@ function normalizeTask(row, index, asOf, exportFile) {
   const projectRaw = get('Проект', 'Группа', 'Рабочая группа');
   const project = parentTitle || projectRaw || 'Без проекта / без родительской задачи';
   const deadline = parseBitrixDate(get('Крайний срок', 'Срок', 'Дедлайн'));
+  const actualStart = parseBitrixDate(get('Дата начала работы', 'Дата старта', 'Фактическая дата начала'));
+  const plannedStart = parseBitrixDate(get('Планируемая дата начала', 'Плановая дата начала'));
+  const plannedEnd = parseBitrixDate(get('Планируемая дата окончания', 'Плановая дата окончания'));
   const created = parseBitrixDate(get('Создана', 'Дата создания'));
   const changed = parseBitrixDate(get('Изменена', 'Дата изменения', 'Последняя активность'));
   const closed = parseBitrixDate(get('Закрыта', 'Дата закрытия'));
@@ -477,7 +549,7 @@ function normalizeTask(row, index, asOf, exportFile) {
 
   const task = {
     id, title, status, responsible, author, creator, coExecutors, observers, parentTitle, parentId, project,
-    deadline, created, changed, closed, priority, estimate, spent, planned,
+    deadline, actualStart, plannedStart, plannedEnd, created, changed, closed, priority, estimate, spent, planned,
     exportFile, exportDate: asOf,
     isCompleted, isWaitingControl, isObserverVisibleControl, isRedWaitingControl, isLongWaitingControl, isInProgress, isDeferred, isProjectContainer, isIgnoredDaily, ignoreForDashboard,
     noDeadline, overdue, overdueDays, dueToday, dueSoon, deadlineDeltaDays,
@@ -498,6 +570,7 @@ function normalizeTask(row, index, asOf, exportFile) {
   task.digestSignalLabel = getDigestSignalLabel(task);
   task.recommendedAction = recommendAction(task);
   task.systemComment = buildSystemComment(task);
+  task.gantt = buildTaskGanttMeta(task, asOf);
   return task;
 }
 
@@ -619,6 +692,7 @@ function renderAll() {
   renderPushList(tasks);
   renderPeople(tasks);
   renderProjects(tasks);
+  renderGantt(tasks);
   renderControl(tasks);
   renderHygiene(tasks);
   renderDigests();
@@ -2497,6 +2571,368 @@ function buildDigestCsvRows(tasks) {
   }));
 }
 
+
+function buildTaskGanttMeta(task, asOf = state.exportDate) {
+  const finish = task.plannedEnd || task.deadline;
+  if (task.plannedStart && finish) {
+    const safeEnd = finish.getTime() >= task.plannedStart.getTime() ? finish : task.plannedStart;
+    return { kind: 'planned', start: task.plannedStart, end: safeEnd, milestone: task.deadline, source: 'Плановые даты из Битрикс24' };
+  }
+  if (task.plannedStart && !finish) {
+    return { kind: 'open-plan', start: task.plannedStart, end: null, milestone: null, source: 'Есть плановый старт, но нет окончания' };
+  }
+  if (task.actualStart) {
+    let end = finish;
+    if (!end || end.getTime() < task.actualStart.getTime()) {
+      end = task.isCompleted ? (task.closed || task.changed || asOf) : asOf;
+    }
+    return {
+      kind: task.deadline ? 'started' : 'open-work',
+      start: task.actualStart,
+      end,
+      milestone: task.deadline,
+      source: task.deadline ? 'Фактический старт и крайний срок' : 'Фактический старт без крайнего срока'
+    };
+  }
+  if (finish) {
+    return { kind: 'milestone', start: null, end: null, milestone: finish, source: task.plannedEnd ? 'Только плановое окончание' : 'Только крайний срок' };
+  }
+  return { kind: 'unscheduled', start: null, end: null, milestone: null, source: 'Нет дат для таймлайна' };
+}
+
+function renderGantt(tasks) {
+  const board = el('ganttBoard');
+  const kpis = el('ganttKpis');
+  const details = el('ganttDetails');
+  if (!board || !kpis || !details) return;
+
+  const focusSelect = el('ganttFocus');
+  const groupSelect = el('ganttGroupBy');
+  const sortSelect = el('ganttSort');
+  if (focusSelect) focusSelect.value = state.gantt.focus;
+  if (groupSelect) groupSelect.value = state.gantt.groupBy;
+  if (sortSelect) sortSelect.value = state.gantt.sort;
+  document.querySelectorAll('[data-gantt-range]').forEach(button => button.classList.toggle('active', button.dataset.ganttRange === state.gantt.range));
+
+  const active = tasks.filter(task => !task.isCompleted);
+  const metrics = buildGanttMetrics(active);
+  kpis.innerHTML = [
+    ganttKpiHtml('Активных задач', metrics.active, 'в текущих фильтрах', 'active', 'blue'),
+    ganttKpiHtml('Интервал на шкале', metrics.interval, `${metrics.coverage}% · плановых дат: ${metrics.planned}`, 'scheduled', 'green'),
+    ganttKpiHtml('Только дедлайн', metrics.milestoneOnly, 'нет даты старта', 'unplanned', 'yellow'),
+    ganttKpiHtml('Без срока', metrics.noDeadline, 'нужно назначить дату', 'unplanned', 'gray'),
+    ganttKpiHtml('Просрочено', metrics.overdue, 'требуется решение', 'overdue', metrics.overdue ? 'red' : 'green')
+  ].join('');
+
+  let rows = filterGanttTasks(tasks, state.gantt.focus);
+  rows = sortGanttTasks(rows, state.gantt.sort);
+  const windowModel = buildGanttWindow(rows, state.gantt.range);
+  const labelWidth = state.gantt.compact ? 330 : 410;
+  const rowHeight = state.gantt.compact ? 42 : 58;
+  const oldScroller = board.querySelector('.gantt-board-scroll');
+  const oldLeft = oldScroller ? oldScroller.scrollLeft : 0;
+  const oldTop = oldScroller ? oldScroller.scrollTop : 0;
+
+  if (!rows.length) {
+    board.innerHTML = '<div class="status-box">Для выбранного режима задач нет.</div>';
+    details.innerHTML = '';
+    return;
+  }
+
+  const grouped = groupGanttTasks(rows, state.gantt.groupBy);
+  const collapsed = new Set(state.gantt.collapsedGroups);
+  const bodyHtml = grouped.map(group => {
+    const groupKey = `${state.gantt.groupBy}:${group.key}`;
+    const isCollapsed = state.gantt.groupBy !== 'none' && collapsed.has(groupKey);
+    const groupHeader = state.gantt.groupBy === 'none' ? '' : renderGanttGroupRow(group, groupKey, isCollapsed, labelWidth, windowModel.timelineWidth);
+    const taskRows = isCollapsed ? '' : group.tasks.map(task => renderGanttTaskRow(task, windowModel, labelWidth, rowHeight)).join('');
+    return groupHeader + taskRows;
+  }).join('');
+
+  const todayLeft = datePixel(state.exportDate, windowModel);
+  board.innerHTML = `
+    <div class="gantt-board-shell ${state.gantt.compact ? 'is-compact' : ''}">
+      <div class="gantt-board-scroll" style="--gantt-label-width:${labelWidth}px; --gantt-row-height:${rowHeight}px" data-label-width="${labelWidth}" data-today-left="${todayLeft}">
+        <div class="gantt-board-inner" style="width:${labelWidth + windowModel.timelineWidth}px">
+          ${renderGanttHeader(windowModel, labelWidth)}
+          <div class="gantt-body">${bodyHtml}</div>
+        </div>
+      </div>
+    </div>`;
+
+  requestAnimationFrame(() => {
+    const scroller = board.querySelector('.gantt-board-scroll');
+    if (!scroller) return;
+    if (state.gantt.centerOnToday) {
+      state.gantt.centerOnToday = false;
+      scrollGanttToToday();
+    } else {
+      scroller.scrollLeft = oldLeft;
+      scroller.scrollTop = oldTop;
+    }
+  });
+
+  const selected = rows.find(task => String(task.id) === String(state.gantt.selectedTaskId)) || rows[0];
+  if (selected) {
+    state.gantt.selectedTaskId = String(selected.id);
+    renderGanttDetails(selected);
+    requestAnimationFrame(() => selectGanttTask(String(selected.id), false));
+  }
+}
+
+function buildGanttMetrics(tasks) {
+  const planned = count(tasks, task => task.gantt?.kind === 'planned');
+  const started = count(tasks, task => ['started', 'open-work'].includes(task.gantt?.kind));
+  const milestoneOnly = count(tasks, task => task.gantt?.kind === 'milestone');
+  const noDeadline = count(tasks, task => !task.deadline && !task.plannedEnd);
+  return {
+    active: tasks.length,
+    planned,
+    started,
+    interval: planned + started,
+    milestoneOnly,
+    noDeadline,
+    overdue: count(tasks, task => task.overdue),
+    coverage: tasks.length ? Math.round(((planned + started) / tasks.length) * 100) : 0
+  };
+}
+
+function ganttKpiHtml(label, value, hint, focus, color) {
+  return `<button class="gantt-kpi ${color}" data-gantt-focus="${escapeAttr(focus)}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong><small>${escapeHtml(hint)}</small></button>`;
+}
+
+function filterGanttTasks(tasks, focus) {
+  if (focus === 'all') return [...tasks];
+  const active = tasks.filter(task => !task.isCompleted);
+  if (focus === 'signals') return active.filter(isHighSignalTask);
+  if (focus === 'scheduled') return active.filter(task => ['planned', 'started', 'open-work'].includes(task.gantt?.kind));
+  if (focus === 'overdue') return active.filter(task => task.overdue);
+  if (focus === 'control') return active.filter(task => task.isWaitingControl);
+  if (focus === 'unplanned') return active.filter(task => ['milestone', 'unscheduled', 'open-plan', 'open-work'].includes(task.gantt?.kind) || !task.deadline);
+  return active;
+}
+
+function sortGanttTasks(tasks, mode) {
+  const farFuture = new Date(2999, 0, 1).getTime();
+  return [...tasks].sort((a, b) => {
+    if (mode === 'deadline') return (a.deadline?.getTime() || farFuture) - (b.deadline?.getTime() || farFuture) || b.riskScore - a.riskScore;
+    if (mode === 'start') return (a.gantt?.start?.getTime() || farFuture) - (b.gantt?.start?.getTime() || farFuture) || b.riskScore - a.riskScore;
+    if (mode === 'title') return a.title.localeCompare(b.title, 'ru');
+    return b.riskScore - a.riskScore || (a.deadline?.getTime() || farFuture) - (b.deadline?.getTime() || farFuture);
+  });
+}
+
+function groupGanttTasks(tasks, groupBy) {
+  if (groupBy === 'none') return [{ key: 'all', label: '', tasks }];
+  const getter = groupBy === 'responsible' ? task => task.responsible : groupBy === 'status' ? task => task.status || 'Статус не указан' : task => task.project;
+  const groups = Object.entries(groupByRows(tasks, getter)).map(([key, groupTasks]) => ({
+    key,
+    label: key,
+    tasks: groupTasks,
+    risk: Math.max(...groupTasks.map(task => task.riskScore || 0)),
+    overdue: count(groupTasks, task => task.overdue),
+    unplanned: count(groupTasks, task => ['milestone', 'unscheduled', 'open-plan', 'open-work'].includes(task.gantt?.kind) || !task.deadline)
+  }));
+  return groups.sort((a, b) => b.risk - a.risk || b.overdue - a.overdue || a.label.localeCompare(b.label, 'ru'));
+}
+
+function groupByRows(rows, getter) {
+  return rows.reduce((acc, row) => {
+    const key = getter(row) || 'Не указано';
+    (acc[key] ||= []).push(row);
+    return acc;
+  }, {});
+}
+
+function buildGanttWindow(tasks, range) {
+  const today = startOfDay(state.exportDate || new Date());
+  let start;
+  let end;
+  let dayWidth;
+  if (range === '30') {
+    start = addDays(today, -14); end = addDays(today, 16); dayWidth = 30;
+  } else if (range === '180') {
+    start = addDays(today, -60); end = addDays(today, 120); dayWidth = 10;
+  } else if (range === 'year') {
+    start = new Date(today.getFullYear(), 0, 1); end = new Date(today.getFullYear(), 11, 31); dayWidth = 6;
+  } else {
+    start = addDays(today, -30); end = addDays(today, 60); dayWidth = 16;
+  }
+  const days = Math.max(1, diffDays(end, start) + 1);
+  return { start, end, days, dayWidth, timelineWidth: days * dayWidth };
+}
+
+function renderGanttHeader(model, labelWidth) {
+  const months = [];
+  let cursor = new Date(model.start.getFullYear(), model.start.getMonth(), 1);
+  while (cursor <= model.end) {
+    const monthStart = cursor < model.start ? model.start : cursor;
+    const next = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+    const monthEnd = addDays(next, -1) > model.end ? model.end : addDays(next, -1);
+    const left = datePixel(monthStart, model);
+    const width = (diffDays(monthEnd, monthStart) + 1) * model.dayWidth;
+    months.push(`<div class="gantt-month" style="left:${left}px;width:${width}px">${escapeHtml(monthStart.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' }))}</div>`);
+    cursor = next;
+  }
+
+  const ticks = [];
+  const step = model.dayWidth >= 20 ? 1 : model.dayWidth >= 10 ? 7 : 14;
+  for (let i = 0; i < model.days; i += step) {
+    const date = addDays(model.start, i);
+    ticks.push(`<div class="gantt-tick-label" style="left:${i * model.dayWidth}px;width:${step * model.dayWidth}px">${escapeHtml(date.toLocaleDateString('ru-RU', model.dayWidth >= 20 ? { day: '2-digit', month: '2-digit' } : { day: '2-digit', month: 'short' }))}</div>`);
+  }
+
+  const todayLeft = datePixel(state.exportDate, model);
+  return `<div class="gantt-header">
+    <div class="gantt-header-label" style="width:${labelWidth}px"><span>Задача / владелец</span><small>${escapeHtml(formatDate(state.exportDate))} — дата среза</small></div>
+    <div class="gantt-header-axis" style="width:${model.timelineWidth}px">
+      <div class="gantt-months">${months.join('')}</div>
+      <div class="gantt-ticks">${ticks.join('')}</div>
+      ${todayLeft >= 0 && todayLeft <= model.timelineWidth ? `<div class="gantt-today-head" style="left:${todayLeft}px">Сегодня</div>` : ''}
+    </div>
+  </div>`;
+}
+
+function renderGanttGroupRow(group, groupKey, collapsed, labelWidth, timelineWidth) {
+  const color = riskColor(group.risk);
+  return `<button class="gantt-group-row" data-gantt-group="${escapeAttr(groupKey)}" style="width:${labelWidth + timelineWidth}px">
+    <span class="gantt-group-label" style="width:${labelWidth}px"><i class="gantt-chevron">${collapsed ? '›' : '⌄'}</i><strong>${escapeHtml(group.label)}</strong><em>${group.tasks.length}</em></span>
+    <span class="gantt-group-summary" style="width:${timelineWidth}px">${badge(riskLabel(color), color)}${group.overdue ? `<b>${group.overdue} просрочено</b>` : ''}${group.unplanned ? `<span>${group.unplanned} требуют планирования</span>` : ''}</span>
+  </button>`;
+}
+
+function renderGanttTaskRow(task, model, labelWidth, rowHeight) {
+  const selected = String(task.id) === String(state.gantt.selectedTaskId);
+  const meta = task.gantt || buildTaskGanttMeta(task);
+  const timeline = renderGanttTimeline(task, meta, model);
+  const due = task.deadline ? formatDate(task.deadline) : 'без срока';
+  const status = task.isCompleted ? 'Завершена' : task.status || 'Статус не указан';
+  return `<div class="gantt-task-row ${selected ? 'is-selected' : ''}" data-gantt-task-id="${escapeAttr(String(task.id))}" style="width:${labelWidth + model.timelineWidth}px;min-height:${rowHeight}px">
+    <div class="gantt-task-label" style="width:${labelWidth}px">
+      <div class="gantt-task-main"><span class="gantt-risk-dot ${escapeAttr(task.riskColor)}"></span><span class="gantt-task-title">${escapeHtml(task.title)}</span></div>
+      <div class="gantt-task-meta"><span>${escapeHtml(task.responsible)}</span><span>${escapeHtml(status)}</span><span>${escapeHtml(due)}</span></div>
+    </div>
+    <div class="gantt-task-timeline" style="width:${model.timelineWidth}px;--gantt-day-width:${model.dayWidth}px">
+      ${renderGanttGrid(model)}
+      ${timeline}
+    </div>
+  </div>`;
+}
+
+function renderGanttGrid(model) {
+  const todayLeft = datePixel(state.exportDate, model);
+  return `<div class="gantt-grid" style="background-size:${model.dayWidth * 7}px 100%"></div>${todayLeft >= 0 && todayLeft <= model.timelineWidth ? `<div class="gantt-today-line" style="left:${todayLeft}px"></div>` : ''}`;
+}
+
+function renderGanttTimeline(task, meta, model) {
+  const color = task.riskColor || 'gray';
+  const deadlineMarker = task.deadline ? renderGanttMarker(task.deadline, model, 'deadline', 'Крайний срок') : '';
+  const overdueTail = task.overdue && task.deadline ? renderGanttOverdueTail(task.deadline, state.exportDate, model) : '';
+  if (meta.kind === 'unscheduled') return '<div class="gantt-unscheduled">НЕТ ДАТ</div>';
+  if (meta.kind === 'milestone') return overdueTail + renderGanttMarker(meta.milestone, model, `milestone ${color}`, meta.source);
+  if (meta.kind === 'open-plan' && meta.start) return renderGanttMarker(meta.start, model, `start-marker ${color}`, meta.source) + '<div class="gantt-missing-end">нет окончания</div>';
+
+  if (meta.start && meta.end) {
+    const startX = datePixel(meta.start, model);
+    const endX = datePixel(meta.end, model) + model.dayWidth;
+    if (endX < 0) return `<div class="gantt-edge gantt-edge-left ${color}">← до окна</div>${deadlineMarker}`;
+    if (startX > model.timelineWidth) return `<div class="gantt-edge gantt-edge-right ${color}">после окна →</div>${deadlineMarker}`;
+    const left = clamp(startX, 0, model.timelineWidth);
+    const right = clamp(endX, 0, model.timelineWidth);
+    const width = Math.max(8, right - left);
+    const clippedLeft = startX < 0 ? 'is-clipped-left' : '';
+    const clippedRight = endX > model.timelineWidth ? 'is-clipped-right' : '';
+    const kindClass = meta.kind === 'planned' ? 'is-plan' : 'is-work';
+    const label = meta.kind === 'planned' ? 'План' : meta.kind === 'open-work' ? 'В работе · без срока' : 'В работе';
+    return `<div class="gantt-bar ${kindClass} ${color} ${clippedLeft} ${clippedRight}" style="left:${left}px;width:${width}px" title="${escapeAttr(meta.source)}"><span>${escapeHtml(label)}</span></div>${overdueTail}${deadlineMarker}`;
+  }
+  return overdueTail + (deadlineMarker || '<div class="gantt-unscheduled">НЕТ ДАТ</div>');
+}
+
+function renderGanttOverdueTail(deadline, asOf, model) {
+  const startX = datePixel(deadline, model);
+  const endX = datePixel(asOf, model);
+  if (endX < 0 || startX > model.timelineWidth || endX <= startX) return '';
+  const left = clamp(startX, 0, model.timelineWidth);
+  const right = clamp(endX, 0, model.timelineWidth);
+  const width = Math.max(4, right - left);
+  return `<div class="gantt-overdue-tail" style="left:${left}px;width:${width}px" title="Просрочка: ${escapeAttr(String(Math.max(0, diffDays(asOf, deadline))))} дн."></div>`;
+}
+
+function renderGanttMarker(date, model, className, title) {
+  if (!date) return '';
+  const x = datePixel(date, model);
+  if (x < 0) return `<div class="gantt-edge gantt-edge-left">← срок</div>`;
+  if (x > model.timelineWidth) return `<div class="gantt-edge gantt-edge-right">срок →</div>`;
+  return `<div class="gantt-marker ${escapeAttr(className)}" style="left:${x}px" title="${escapeAttr(title)}"></div>`;
+}
+
+function renderGanttDetails(task) {
+  const details = el('ganttDetails');
+  if (!details || !task) return;
+  const meta = task.gantt || buildTaskGanttMeta(task);
+  const planIssue = getGanttPlanningAction(task, meta);
+  details.innerHTML = `<div class="gantt-details-head">
+      <div><div class="section-eyebrow">Selected task</div><h3>${escapeHtml(task.title)}</h3></div>
+      ${badge(task.riskLabel, task.riskColor)}
+    </div>
+    <div class="gantt-detail-grid">
+      <div><span>Проект</span><strong>${escapeHtml(task.project)}</strong></div>
+      <div><span>Ответственный</span><strong>${escapeHtml(task.responsible)}</strong></div>
+      <div><span>Статус</span><strong>${escapeHtml(task.status || 'Не указан')}</strong></div>
+      <div><span>Источник полосы</span><strong>${escapeHtml(meta.source)}</strong></div>
+      <div><span>Старт</span><strong>${escapeHtml(formatDateTime(meta.start || task.plannedStart || task.actualStart) || 'не задан')}</strong></div>
+      <div><span>Крайний срок</span><strong>${escapeHtml(formatDateTime(task.deadline || task.plannedEnd) || 'не задан')}</strong></div>
+    </div>
+    <div class="gantt-action-strip">
+      <div><span>Сигнал</span><strong>${escapeHtml(getTaskActionReason(task))}</strong></div>
+      <div><span>Кому мяч</span><strong>${escapeHtml(task.ballOwnerLabel)}</strong></div>
+      <div><span>Следующее действие</span><strong>${escapeHtml(getTaskNextAction(task))}</strong></div>
+      <div><span>Качество плана</span><strong>${escapeHtml(planIssue)}</strong></div>
+    </div>`;
+}
+
+function getGanttPlanningAction(task, meta) {
+  if (meta.kind === 'planned') return 'Плановые даты заполнены';
+  if (meta.kind === 'started' && task.deadline) return 'Рабочий интервал собран из фактического старта и дедлайна';
+  if (meta.kind === 'milestone') return 'Добавить плановую дату старта';
+  if (meta.kind === 'open-plan') return 'Добавить плановую дату окончания';
+  if (meta.kind === 'open-work') return 'Назначить крайний срок';
+  return 'Назначить старт и крайний срок';
+}
+
+function selectGanttTask(taskId, renderDetails = true) {
+  state.gantt.selectedTaskId = String(taskId || '');
+  document.querySelectorAll('[data-gantt-task-id]').forEach(row => row.classList.toggle('is-selected', row.dataset.ganttTaskId === state.gantt.selectedTaskId));
+  if (renderDetails) {
+    const task = state.tasks.find(item => String(item.id) === state.gantt.selectedTaskId);
+    if (task) renderGanttDetails(task);
+  }
+}
+
+function scrollGanttToToday() {
+  const scroller = el('ganttBoard')?.querySelector('.gantt-board-scroll');
+  if (!scroller) return;
+  const labelWidth = Number(scroller.dataset.labelWidth || 0);
+  const todayLeft = Number(scroller.dataset.todayLeft || 0);
+  scroller.scrollTo({ left: Math.max(0, labelWidth + todayLeft - scroller.clientWidth * 0.55), behavior: 'smooth' });
+}
+
+function datePixel(date, model) {
+  if (!date) return -99999;
+  return diffDays(startOfDay(date), model.start) * model.dayWidth;
+}
+
+function startOfDay(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function addDays(date, amount) {
+  const next = startOfDay(date);
+  next.setDate(next.getDate() + amount);
+  return next;
+}
+
 function renderDynamic() {
   if (!state.previousTasks.length) {
     el('dynamicContent').innerHTML = '<p class="muted">Для динамики нужно минимум две выгрузки. Добавьте следующую выгрузку в data/raw/ и data/exports.json.</p>';
@@ -2564,6 +3000,7 @@ function fillSelect(id, values) {
 function switchTab(tab) {
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${tab}`));
+  if (tab === 'gantt') requestAnimationFrame(scrollGanttToToday);
 }
 
 function tableHtml(rows, columns) {
@@ -2601,6 +3038,23 @@ function exportCsv(kind) {
     project: p.project, total: p.total, overdue: p.overdue, due_today: p.dueToday, due_soon: p.dueSoon, waiting_control: p.waitingControl, no_deadline: p.noDeadline, stale_14: p.stale14, risk_score: p.riskScore, main_responsible: p.mainResponsible
   }));
   if (kind === 'hygiene') rows = buildHygieneIssues(tasks).map(i => ({ issue: i.issue, responsible: i.responsible, project: i.project, task: i.title, status: i.status, action: i.action }));
+  if (kind === 'gantt') rows = sortGanttTasks(filterGanttTasks(tasks, state.gantt.focus), state.gantt.sort).map(t => ({
+    id: t.id,
+    task: t.title,
+    project: t.project,
+    responsible: t.responsible,
+    status: t.status,
+    gantt_type: t.gantt?.kind || '',
+    gantt_source: t.gantt?.source || '',
+    planned_start: formatDateTime(t.plannedStart),
+    actual_start: formatDateTime(t.actualStart),
+    planned_end: formatDateTime(t.plannedEnd),
+    deadline: formatDateTime(t.deadline),
+    overdue_days: t.overdueDays,
+    risk_score: t.riskScore,
+    risk: t.riskLabel,
+    next_action: getTaskNextAction(t)
+  }));
   if (kind === 'report') rows = buildReportCsvRows(buildExportReport());
   if (kind === 'digest') rows = buildDigestCsvRows(state.tasks);
   downloadCsv(rows, `${kind}_${state.exportName.replace(/\.xls$/i, '')}.csv`);

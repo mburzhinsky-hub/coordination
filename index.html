@@ -71,6 +71,7 @@
       <button class="tab active" data-tab="today">Mission Control</button>
       <button class="tab" data-tab="people">Люди в фокусе</button>
       <button class="tab" data-tab="projects">Проекты в фокусе</button>
+      <button class="tab" data-tab="gantt">Операционный Гант</button>
       <button class="tab" data-tab="control">Ждёт контроля</button>
       <button class="tab" data-tab="hygiene">Гигиена без шума</button>
       <button class="tab" data-tab="digests">Дайджесты</button>
@@ -126,6 +127,75 @@
         </div>
         <div id="projectBars" class="bars"></div>
         <div id="projectTable" class="table-wrap"></div>
+      </div>
+    </section>
+
+
+    <section id="tab-gantt" class="tab-panel">
+      <div class="card gantt-card">
+        <div class="card-head gantt-card-head">
+          <div>
+            <div class="section-eyebrow">Operational timeline</div>
+            <h2>Операционный Гант</h2>
+            <p class="muted">План, фактический старт, дедлайны и пробелы планирования в одном экране. Цвет показывает риск, форма — качество исходных дат.</p>
+          </div>
+          <div class="gantt-head-actions">
+            <button id="ganttTodayBtn" class="button">К сегодняшнему дню</button>
+            <button id="ganttDensityBtn" class="button button-light">Компактный вид</button>
+            <button class="button button-light" data-export="gantt">Скачать план CSV</button>
+          </div>
+        </div>
+
+        <div class="gantt-toolbar">
+          <label>Показать
+            <select id="ganttFocus">
+              <option value="active">Все активные</option>
+              <option value="signals">Только с действием</option>
+              <option value="scheduled">С интервалом на шкале</option>
+              <option value="overdue">Просроченные</option>
+              <option value="control">На контроле</option>
+              <option value="unplanned">Пробелы планирования</option>
+              <option value="all">Все, включая завершённые</option>
+            </select>
+          </label>
+          <label>Группировка
+            <select id="ganttGroupBy">
+              <option value="project">По проектам</option>
+              <option value="responsible">По ответственным</option>
+              <option value="status">По статусам</option>
+              <option value="none">Без группировки</option>
+            </select>
+          </label>
+          <label>Сортировка
+            <select id="ganttSort">
+              <option value="risk">Сначала высокий риск</option>
+              <option value="deadline">По ближайшему сроку</option>
+              <option value="start">По дате старта</option>
+              <option value="title">По названию</option>
+            </select>
+          </label>
+          <div class="gantt-range-control" aria-label="Масштаб Ганта">
+            <span>Горизонт</span>
+            <div class="gantt-range-buttons">
+              <button class="gantt-range-button" data-gantt-range="30">30 дней</button>
+              <button class="gantt-range-button active" data-gantt-range="90">90 дней</button>
+              <button class="gantt-range-button" data-gantt-range="180">180 дней</button>
+              <button class="gantt-range-button" data-gantt-range="year">Год</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="ganttKpis" class="gantt-kpi-grid"></div>
+        <div class="gantt-legend">
+          <span><i class="legend-bar legend-plan"></i>Плановые даты</span>
+          <span><i class="legend-bar legend-work"></i>Фактический старт → срок</span>
+          <span><i class="legend-diamond"></i>Только дедлайн</span>
+          <span><i class="legend-line"></i>Сегодня</span>
+          <span class="muted">Цвет элемента = риск задачи</span>
+        </div>
+
+        <div id="ganttBoard"></div>
+        <div id="ganttDetails" class="gantt-details"></div>
       </div>
     </section>
 
@@ -230,6 +300,9 @@
           <li>Открой ссылку GitHub Pages и нажми <b>Обновить</b>.</li>
         </ol>
         <p class="muted">Задачи со статусом <b>Отложена</b>, проектные контейнеры и ежедневные служебные задачи исключаются из расчетов.</p>
+        <h3>Операционный Гант</h3>
+        <p>Гант строится только по датам из выгрузки. Если заполнены плановые начало и окончание — показывается плановая полоса. Если есть фактический старт и дедлайн — рабочая полоса. Если есть только дедлайн — ромб-событие. Задачи без дат попадают в режим <b>Пробелы планирования</b>.</p>
+        <p>Используй карточки над шкалой как быстрые фильтры, группировку по проектам или ответственным, а кнопку <b>К сегодняшнему дню</b> — чтобы мгновенно вернуться к текущему срезу.</p>
         <h3>Персональные дайджесты</h3>
         <p>Раздел <b>Дайджесты</b> работает в action-only логике: задача попадает человеку только если у него есть понятное действие по роли.</p>
         <p>Для ежедневной работы используй режим <b>Красная зона, проверка и сегодня</b>. Внутри каждой карточки есть только четыре смысла: сигнал, кому писать, кому мяч и что сделать.</p>
