@@ -23,8 +23,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(find .upload/current -maxdepth 1 -type f -name 'part*.txt' | wc -l)" -eq 8
-          cat .upload/current/part*.txt > /tmp/export.b64
+          test "$(find .upload/current -maxdepth 1 -type f -name 'seg*.txt' | wc -l)" -eq 10
+          cat .upload/current/seg*.txt > /tmp/export.b64
           test "$(wc -c < /tmp/export.b64)" -eq 182032
           base64 -d /tmp/export.b64 > /tmp/export.xls.xz
           echo "4dc6174a8604c5de1835d456ba42c3ac57a06f5c2208e57046691d1cfcc5a54a  /tmp/export.xls.xz" | sha256sum -c -
@@ -100,7 +100,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf .upload
+          rm -rf .upload data/.refresh
           rm -f .github/workflows/refresh-data.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
