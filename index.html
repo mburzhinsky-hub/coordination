@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ITO Mission Control</title>
-  <link rel="stylesheet" href="assets/style.css" />
+  <title>Координация ИТО</title>
+  <link rel="stylesheet" href="assets/style.css?v=20260917" />
 </head>
 <body>
   <header class="topbar">
     <div>
-      <div class="eyebrow">ITO / TASK OPS</div>
-      <h1>ITO Mission Control</h1>
-      <p>Action-only контроль задач: только конкретика, кому писать, кому мяч и следующее действие.</p>
+      <div class="eyebrow">VISUALS / ИНЖЕНЕРНО-ТЕХНИЧЕСКИЙ ОТДЕЛ</div>
+      <h1>Координация ИТО</h1>
+      <p>Задачи, решения и следующий шаг по каждому проекту.</p>
     </div>
     <div class="header-actions">
       <label class="select-label">Выгрузка
@@ -26,21 +26,11 @@
   </header>
 
   <main>
-    <section id="statusBox" class="status-box">Загрузка данных...</section>
-
-    <section id="uploadReportCard" class="card upload-report">
-      <div class="card-head report-head">
-        <div>
-          <div class="section-eyebrow">Signal report</div>
-          <h2>Что требует действия</h2>
-          <p class="muted">Скрываем информационный шум и показываем только сигналы: просрочки, зависшую приемку, сроки, ответственных, высокий риск и новые управленческие изменения.</p>
-        </div>
-        <button class="button" data-export="report">Скачать отчет CSV</button>
-      </div>
-      <div id="uploadReportContent"></div>
-    </section>
+    <section id="snapshotContext" class="snapshot-context" aria-label="Период наблюдения"></section>
+    <section id="statusBox" class="status-box" role="status" aria-live="polite">Загрузка данных...</section>
 
     <section class="filters card">
+      <div class="filter-heading"><strong>Рабочая выборка</strong><span id="filterCount" class="muted"></span><button id="resetFiltersBtn" class="button button-light">Сбросить фильтры</button></div>
       <div class="filter-grid">
         <label>Ответственный
           <select id="filterResponsible"><option value="">Все</option></select>
@@ -67,16 +57,23 @@
       </div>
     </section>
 
+    <div class="quick-filters" aria-label="Быстрые фильтры">
+      <button class="button button-light" data-quick="overdue" aria-pressed="false">Просрочено</button>
+      <button class="button button-light" data-quick="today" aria-pressed="false">Срок сегодня</button>
+      <button class="button button-light" data-quick="control" aria-pressed="false">Ждёт контроля</button>
+      <button class="button button-light" data-quick="noDeadline" aria-pressed="false">Без срока</button>
+      <span class="muted">Фильтры: рабочие списки, люди, проекты и Гант</span>
+    </div>
     <nav class="tabs" aria-label="Разделы дашборда">
-      <button class="tab active" data-tab="today">Mission Control</button>
+      <button class="tab active" data-tab="today">Сегодня</button>
       <button class="tab" data-tab="people">Люди в фокусе</button>
       <button class="tab" data-tab="projects">Проекты в фокусе</button>
       <button class="tab" data-tab="gantt">Операционный Гант</button>
       <button class="tab" data-tab="control">Ждёт контроля</button>
-      <button class="tab" data-tab="hygiene">Гигиена без шума</button>
+      <button class="tab" data-tab="hygiene">Порядок в задачах</button>
       <button class="tab" data-tab="digests">Дайджесты</button>
       <button class="tab" data-tab="dynamic">Динамика</button>
-      <button class="tab" data-tab="all">Action-only задачи</button>
+      <button class="tab" data-tab="all">Задачи к действию</button>
       <button class="tab" data-tab="help">Как обновлять</button>
     </nav>
 
@@ -84,13 +81,26 @@
       <div class="card coordinator-brief-card">
         <div class="card-head coordinator-brief-head">
           <div>
-            <div class="section-eyebrow">Coordinator brief</div>
+            <div class="section-eyebrow">ПРИОРИТЕТЫ КООРДИНАТОРА</div>
             <h2>Координатору сегодня</h2>
-            <p class="muted">Кого пнуть, кому напомнить и какие решения сдвинут день быстрее всего.</p>
+            <p class="muted">Кому написать, что проверить и какое решение требуется по выбранному срезу.</p>
           </div>
         </div>
         <div id="coordinatorBrief"></div>
       </div>
+    <details id="uploadReportCard" class="card upload-report">
+      <summary>Сводка по всему отделу · риски и изменения</summary>
+      <div class="card-head report-head">
+        <div>
+          <div class="section-eyebrow">СВОДКА БЕЗ ФИЛЬТРОВ</div>
+          <h2>Сводка по отделу</h2>
+          <p class="muted">Общий срез по всем задачам. Фильтры рабочего списка на эту сводку не влияют.</p>
+        </div>
+        <button class="button" data-export="report">Скачать отчет CSV</button>
+      </div>
+      <div id="uploadReportContent"></div>
+    </details>
+
       <div id="kpiCards" class="kpi-grid"></div>
       <div class="grid-2">
         <div class="card">
@@ -135,7 +145,7 @@
       <div class="card gantt-card">
         <div class="card-head gantt-card-head">
           <div>
-            <div class="section-eyebrow">Operational timeline</div>
+            <div class="section-eyebrow">ПЛАН РАБОТ</div>
             <h2>Операционный Гант</h2>
             <p class="muted">План, фактический старт, дедлайны и пробелы планирования в одном экране. Цвет показывает риск, форма — качество исходных дат.</p>
           </div>
@@ -210,7 +220,7 @@
     <section id="tab-hygiene" class="tab-panel">
       <div class="card">
         <div class="card-head">
-          <h2>Гигиена без шума задач</h2>
+          <h2>Порядок в задачах задач</h2>
           <button class="button" data-export="hygiene">Скачать CSV</button>
         </div>
         <div id="hygieneCards" class="kpi-grid"></div>
@@ -222,7 +232,7 @@
       <div class="card">
         <div class="card-head">
           <div>
-            <h2>Action-only дайджесты</h2>
+            <h2>Персональные дайджесты</h2>
             <p class="muted">Только то, что человек реально должен сделать или проверить. Без справочных задач и зеленого шума.</p>
           </div>
           <div class="digest-actions">
@@ -272,7 +282,7 @@
 
     <section id="tab-dynamic" class="tab-panel">
       <div class="card">
-        <h2>Сигнальная динамика</h2>
+        <h2>Изменения между выгрузками</h2><p class="muted">Сравниваются все задачи в двух соседних срезах. Фильтры рабочего списка здесь не применяются.</p>
         <div id="dynamicContent"></div>
       </div>
     </section>
@@ -280,7 +290,7 @@
     <section id="tab-all" class="tab-panel">
       <div class="card">
         <div class="card-head">
-          <h2>Action-only задачи</h2>
+          <h2>Задачи к действию</h2>
           <button class="button" data-export="all">Скачать CSV</button>
         </div>
         <div id="allTasksTable" class="table-wrap"></div>
@@ -290,13 +300,15 @@
     <section id="tab-help" class="tab-panel">
       <div class="card help">
         <h2>Как обновлять дашборд</h2>
+        <p><b>Начало наблюдения — 16.09.2026 09:52:52.</b> Более ранние выгрузки не учитываются и удаляются из локального хранилища. Выгрузки за 17 сентября и позже сохраняются.</p>
+        <p>Счётчики длительности начинаются с первого наблюдения не раньше базовой даты. Ожидание контроля отслеживается по последовательности выгрузок, а не по дате изменения задачи. Точные переходы между срезами неизвестны. Исходные сроки и плановые даты Битрикса сохраняются.</p>
         <ol>
           <li>В Битрикс24 открой список задач отдела.</li>
           <li>Сделай экспорт задач в файл <code>.xls</code>.</li>
           <li>Для быстрой проверки нажми сверху <b>Загрузить выгрузку</b> и выбери файл. Дашборд пересчитается прямо в браузере.</li>
           <li>Чтобы новая выгрузка была доступна после публикации на GitHub Pages для всех пользователей, положи файл в <code>data/raw/</code>.</li>
           <li>Открой <code>data/exports.json</code> и добавь имя новой выгрузки в список <code>files</code>.</li>
-          <li>Залей изменения через GitHub Desktop: <b>Commit to main</b> → <b>Push origin</b>.</li>
+          <li>Добавь файлы через страницу репозитория GitHub: <b>Add file → Upload files</b>, затем сохрани изменения.</li>
           <li>Открой ссылку GitHub Pages и нажми <b>Обновить</b>.</li>
         </ol>
         <p class="muted">Задачи со статусом <b>Отложена</b>, проектные контейнеры и ежедневные служебные задачи исключаются из расчетов.</p>
@@ -317,9 +329,9 @@
   </main>
 
   <footer>
-    <span>ITO Mission Control · GitHub Pages · Action-only режим · без серверной части.</span>
+    <span>Координация ИТО · GitHub Pages · Наблюдение с 16.09.2026 · без серверной части.</span>
   </footer>
 
-  <script src="assets/app.js"></script>
+  <script src="assets/app.js?v=20260917"></script>
 </body>
 </html>

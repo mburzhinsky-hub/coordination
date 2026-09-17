@@ -1,6 +1,14 @@
 'use strict';
 
+const BASELINE_FILE = 'tasks_2026-09-16_09-52-52.xls';
+const BASELINE_DATE = new Date(2026, 8, 16, 9, 52, 52);
+
 const state = {
+  localLoaded: false,
+  storageWarning: false,
+  observations: new Map(),
+  previousLoaded: false,
+  loadSequence: 0,
   manifest: null,
   exportName: null,
   exportDate: new Date(),
@@ -15,7 +23,8 @@ const state = {
     project: '',
     status: '',
     risk: '',
-    search: ''
+    search: '',
+    quick: ''
   },
   digest: {
     person: '',
@@ -138,6 +147,15 @@ async function init() {
 }
 
 function bindUi() {
+  el('resetFiltersBtn').addEventListener('click', () => {
+    Object.keys(state.filters).forEach(key => { state.filters[key] = ''; });
+    ['filterResponsible', 'filterProject', 'filterStatus', 'filterRisk', 'searchBox'].forEach(id => { el(id).value = ''; });
+    renderAll();
+  });
+  document.querySelectorAll('[data-quick]').forEach(button => button.addEventListener('click', () => {
+    state.filters.quick = state.filters.quick === button.dataset.quick ? '' : button.dataset.quick;
+    renderAll();
+  }));
   document.querySelectorAll('.tab').forEach(button => {
     button.addEventListener('click', () => switchTab(button.dataset.tab));
   });
@@ -165,7 +183,7 @@ function bindUi() {
   });
 
   el('reloadBtn').addEventListener('click', async () => {
-    await loadExport(state.exportName);
+    await loadManifest(state.exportName);
   });
 
   el('uploadInput').addEventListener('change', async (event) => {
@@ -291,14 +309,15 @@ function bindUi() {
 
 async function loadManifest(preferredFile = null) {
   try {
-    loadLocalExports();
+    if (!state.localLoaded) { loadLocalExports(); state.localLoaded = true; }
     let repoFiles = [];
 
     try {
       const res = await fetch(cacheBust('data/exports.json'));
       if (!res.ok) throw new Error(`Не найден data/exports.json (${res.status})`);
       state.manifest = await res.json();
-      repoFiles = [...(state.manifest.files || [])].filter(Boolean);
+      repoFiles = [...(state.manifest.files || [])].filter(isAllowedExport);
+      state.manifest.files = repoFiles;
     } catch (manifestError) {
       state.manifest = { files: [] };
       console.warn('Не удалось загрузить manifest:', manifestError);
@@ -313,7 +332,7 @@ async function loadManifest(preferredFile = null) {
 
     el('exportSelect').innerHTML = files.map(file => {
       const source = getLocalExport(file) ? ' · с сайта' : '';
-      return `<option value="${escapeAttr(file)}">${escapeHtml(file + source)}</option>`;
+      return `<option value="${escapeAttr(file)}">${escapeHtml(formatDateTime(parseDateFromFileName(file)) + (file === BASELINE_FILE ? ' · старт' : '') + source)}</option>`;
     }).join('');
     const latest = preferredFile && files.includes(preferredFile) ? preferredFile : files[files.length - 1];
     el('exportSelect').value = latest;
@@ -323,42 +342,74 @@ async function loadManifest(preferredFile = null) {
   }
 }
 
-async function loadExport(fileName) {
-  try {
-    state.exportName = fileName;
-    state.exportDate = parseDateFromFileName(fileName) || new Date();
-    showStatus(`Загружается выгрузка ${fileName}...`);
-
-    const text = await fetchExportText(fileName);
-    state.tasks = normalizeRows(parseBitrixHtmlExport(text), state.exportDate, fileName);
-    state.gantt.centerOnToday = true;
-    state.gantt.selectedTaskId = '';
-    state.ignoredCount = state.tasks.ignoredCount || 0;
-    state.allRows = [...state.tasks];
-
-    await loadPreviousExport(fileName);
-    fillFilters();
-    renderAll();
-    showStatus(`Загружено задач в расчет: ${state.tasks.length}. Исключено: ${state.ignoredCount} (отложенные, проектные контейнеры, ежедневные задачи). Расчетная дата контроля: ${formatDateTime(state.exportDate)}.`);
-  } catch (error) {
-    showError(error.message);
-  }
+function isAllowedExport(name) {
+  const date = typeof name === 'string' ? parseDateFromFileName(name) : null;
+  return Boolean(date && date >= BASELINE_DATE);
 }
 
-async function loadPreviousExport(currentFile) {
-  state.previousTasks = [];
-  state.previousExportName = null;
-  const files = unique([...(state.manifest.files || []), ...state.localExports.map(item => item.name)]).filter(Boolean).sort(compareExportNames);
-  const idx = files.indexOf(currentFile);
-  if (idx <= 0) return;
-  const previousFile = files[idx - 1];
-  state.previousExportName = previousFile;
+function availableExportNames() {
+  return unique([...(state.manifest?.files || []), ...state.localExports.map(item => item.name)])
+    .filter(isAllowedExport).sort(compareExportNames);
+}
+
+// Status duration is observed between snapshots; Bitrix's modified date is not a status transition.
+function observeSnapshot(rows, asOf, fileName, observations) {
+  const firstPass = normalizeRows(rows, asOf, fileName);
+  const next = new Map();
+  for (const task of firstPass) {
+    const old = observations.get(String(task.id));
+    const signature = JSON.stringify([task.status, task.responsible, dateKey(task.deadline), dateKey(task.changed)]);
+    const lastActivity = task.changed || task.created;
+    next.set(String(task.id), {
+      firstSeen: old?.firstSeen || asOf,
+      quietSince: old && old.signature === signature ? old.quietSince : new Date(Math.max(asOf.getTime(), lastActivity?.getTime() || 0)),
+      controlSince: task.isWaitingControl ? (old?.controlSince || asOf) : null,
+      signature
+    });
+  }
+  return next;
+}
+
+async function loadExport(fileName) {
+  const sequence = ++state.loadSequence;
   try {
-    const text = await fetchExportText(previousFile);
-    const previousDate = parseDateFromFileName(previousFile) || state.exportDate;
-    state.previousTasks = normalizeRows(parseBitrixHtmlExport(text), previousDate, previousFile);
+    if (!isAllowedExport(fileName)) throw new Error('История начинается с 16.09.2026 09:52:52. Выберите выгрузку не раньше этой даты.');
+    showStatus(`Загружается выгрузка ${fileName}...`);
+    const files = availableExportNames();
+    const index = files.indexOf(fileName);
+    if (index < 0) throw new Error('Выгрузка не найдена в списке.');
+    // Build locally first: a failed or superseded load cannot mix two snapshots.
+    let observations = new Map();
+    let current = [], previous = [], previousFile = null;
+    for (const name of files.slice(0, index + 1)) {
+      const text = await fetchExportText(name);
+      if (sequence !== state.loadSequence) return;
+      const asOf = parseDateFromFileName(name);
+      const rows = parseBitrixHtmlExport(text);
+      observations = observeSnapshot(rows, asOf, name, observations);
+      previous = current;
+      previousFile = current.exportFile || null;
+      current = normalizeRows(rows, asOf, name, observations);
+      current.exportFile = name;
+    }
+    state.observations = observations;
+    state.exportName = fileName;
+    state.exportDate = parseDateFromFileName(fileName);
+    state.tasks = current;
+    state.previousTasks = previous;
+    state.previousExportName = previousFile;
+    state.previousLoaded = Boolean(previousFile);
+    state.gantt.centerOnToday = true;
+    state.gantt.selectedTaskId = '';
+    state.ignoredCount = current.ignoredCount || 0;
+    state.allRows = [...current];
+    fillFilters();
+    renderAll();
+    showStatus(`Срез ${formatDateTime(state.exportDate)} · ${current.length} задач · исключено ${state.ignoredCount}. ${getLocalExport(fileName) ? (state.storageWarning ? 'Выгрузка только в текущей сессии: хранилище браузера переполнено.' : 'Эта выгрузка сохранена только в этом браузере.') : 'Выгрузка из репозитория.'}`);
   } catch (error) {
-    console.warn('Не удалось загрузить предыдущую выгрузку:', error);
+    if (sequence !== state.loadSequence) return;
+    if (state.exportName) el('exportSelect').value = state.exportName;
+    showError(`Не удалось обновить данные. ${error.message}`);
   }
 }
 
@@ -377,7 +428,9 @@ async function fetchExportText(fileName) {
 function loadLocalExports() {
   try {
     const raw = localStorage.getItem(LOCAL_EXPORTS_STORAGE_KEY);
-    state.localExports = raw ? JSON.parse(raw).filter(item => item && item.name && item.text) : [];
+    const parsed = raw ? JSON.parse(raw) : [];
+    state.localExports = Array.isArray(parsed) ? parsed.filter(item => item && isAllowedExport(item.name) && typeof item.text === 'string' && item.text) : [];
+    if (raw && JSON.stringify(state.localExports) !== raw) saveLocalExports();
   } catch (error) {
     console.warn('Не удалось прочитать локальные выгрузки:', error);
     state.localExports = [];
@@ -387,7 +440,9 @@ function loadLocalExports() {
 function saveLocalExports() {
   try {
     localStorage.setItem(LOCAL_EXPORTS_STORAGE_KEY, JSON.stringify(state.localExports));
+    state.storageWarning = false;
   } catch (error) {
+    state.storageWarning = true;
     showStatus('Выгрузка загружена в текущую сессию, но браузер не смог сохранить ее надолго. Возможно, файл слишком большой.');
   }
 }
@@ -404,18 +459,22 @@ async function handleUploadFiles(fileList) {
   }
 
   let lastUploadedName = '';
+  const pending = [];
+  try {
   for (const file of files) {
     const text = await readFileAsText(file);
     const name = normalizeUploadFileName(file.name);
-    lastUploadedName = name;
-    state.localExports = state.localExports.filter(item => item.name !== name);
-    state.localExports.push({ name, text, savedAt: new Date().toISOString() });
+    if (!isAllowedExport(name)) throw new Error(`Файл ${file.name}: нужна дата не раньше 16.09.2026 09:52:52 в имени tasks_YYYY-MM-DD_HH-MM-SS.xls.`);
+    parseBitrixHtmlExport(text);
+    pending.push({ name, text, savedAt: new Date().toISOString() });
   }
+  } catch (error) { showError(error.message); return; }
+  for (const item of pending) {
+    state.localExports = state.localExports.filter(old => old.name !== item.name);
+    state.localExports.push(item);
+  }
+  lastUploadedName = pending.map(item => item.name).sort(compareExportNames).at(-1);
 
-  state.localExports.sort((a, b) => compareExportNames(a.name, b.name));
-  const lastUploaded = state.localExports.find(item => item.name === lastUploadedName);
-  state.localExports = state.localExports.filter(item => item.name !== lastUploadedName).slice(-11);
-  if (lastUploaded) state.localExports.push(lastUploaded);
   state.localExports.sort((a, b) => compareExportNames(a.name, b.name));
   saveLocalExports();
   await loadManifest(lastUploadedName);
@@ -458,6 +517,7 @@ function parseBitrixHtmlExport(text) {
 
   const headerIndex = findHeaderRow(rows);
   const headers = rows[headerIndex].map(normalizeHeader);
+  if (!headers.includes(normalizeHeader('Статус')) || !headers.some(h => ['Название', 'Задача', 'Наименование'].map(normalizeHeader).includes(h))) throw new Error('Это не выгрузка задач: нужны столбцы Название и Статус.');
   const dataRows = rows.slice(headerIndex + 1);
 
   return dataRows.map(row => {
@@ -479,16 +539,16 @@ function findHeaderRow(rows) {
   return bestIndex;
 }
 
-function normalizeRows(rows, asOf, exportFile) {
+function normalizeRows(rows, asOf, exportFile, observations = new Map()) {
   const normalized = rows
-    .map((row, index) => normalizeTask(row, index, asOf, exportFile))
+    .map((row, index) => normalizeTask(row, index, asOf, exportFile, observations))
     .filter(task => task.title || task.id);
   const included = normalized.filter(task => !task.ignoreForDashboard);
   included.ignoredCount = normalized.length - included.length;
   return included;
 }
 
-function normalizeTask(row, index, asOf, exportFile) {
+function normalizeTask(row, index, asOf, exportFile, observations = new Map()) {
   const get = (...names) => {
     for (const name of names) {
       const value = row[normalizeHeader(name)];
@@ -522,28 +582,33 @@ function normalizeTask(row, index, asOf, exportFile) {
   const planned = parseNumber(get('Плановая длительность'));
 
   const normalizedStatus = status.toLowerCase();
-  const isCompleted = Boolean(closed) || /заверш|закрыт|выполнен/.test(normalizedStatus);
+  const isCompleted = /^(завершена|завершено|завершён|завершен|закрыта|закрыто|выполнена|выполнено|completed)$/.test(normalizedStatus.trim());
   const isWaitingControl = /контрол/.test(normalizedStatus);
   const isInProgress = /выполня|работ|идет|идёт/.test(normalizedStatus);
   const isDeferred = /отлож/.test(normalizedStatus);
   const isProjectContainer = PROJECT_CONTAINER_KEYS.has(projectKey(title));
   const isIgnoredDaily = IGNORED_DAILY_TASK_KEYS.has(projectKey(title));
-  const ignoreForDashboard = isDeferred || isProjectContainer || isIgnoredDaily;
-  const noDeadline = !deadline;
+  const historicalCompletion = isCompleted && (!closed || closed < BASELINE_DATE);
+  const ignoreForDashboard = isDeferred || isProjectContainer || isIgnoredDaily || historicalCompletion;
+  const noDeadline = !isCompleted && !deadline;
   const overdue = !isCompleted && deadline && deadline.getTime() < asOf.getTime();
   const deadlineDeltaDays = deadline ? diffDays(deadline, asOf) : null;
   const dueToday = !isCompleted && deadline && sameDay(deadline, asOf) && !overdue;
   const dueSoon = !isCompleted && deadline && deadlineDeltaDays !== null && deadlineDeltaDays >= 0 && deadlineDeltaDays <= settings.dueSoonDays;
-  const lastActivity = changed || created;
-  const staleDays = lastActivity ? Math.max(0, Math.floor((asOf - lastActivity) / 86400000)) : null;
+  const observation = observations.get(String(id));
+  const firstSeen = observation?.firstSeen || asOf;
+  const observedUnchangedSince = new Date(Math.max(BASELINE_DATE.getTime(), observation?.quietSince?.getTime() || asOf.getTime()));
+  const staleDays = isCompleted ? 0 : Math.max(0, Math.floor((asOf - observedUnchangedSince) / 86400000));
   const stale7 = staleDays !== null && staleDays > settings.stale7Days;
   const stale14 = staleDays !== null && staleDays > settings.stale14Days;
-  const waitingControlDays = isWaitingControl && staleDays !== null ? staleDays : 0;
+  const controlSince = observation?.controlSince || asOf;
+  const waitingControlDays = isWaitingControl ? Math.max(0, Math.floor((asOf - controlSince) / 86400000)) : 0;
   const isObserverVisibleControl = isWaitingControl && waitingControlDays >= settings.waitingControlObserverDays;
   const isRedWaitingControl = isWaitingControl && waitingControlDays >= settings.waitingControlRedDays;
   const isLongWaitingControl = isRedWaitingControl;
   const noParent = !parentTitle && !parentId;
-  const overdueDays = overdue ? Math.max(0, Math.ceil((asOf - deadline) / 86400000)) : 0;
+  const overdueSince = deadline ? new Date(Math.max(deadline.getTime(), BASELINE_DATE.getTime(), firstSeen.getTime())) : null;
+  const overdueDays = overdue ? Math.max(0, Math.floor((asOf - overdueSince) / 86400000)) : 0;
   const controlEscalationOwners = unique([author, ...(observers || [])]).filter(Boolean);
   const controlEscalationLabel = controlEscalationOwners.length ? controlEscalationOwners.join(', ') : 'Постановщик / наблюдатели';
 
@@ -553,7 +618,7 @@ function normalizeTask(row, index, asOf, exportFile) {
     exportFile, exportDate: asOf,
     isCompleted, isWaitingControl, isObserverVisibleControl, isRedWaitingControl, isLongWaitingControl, isInProgress, isDeferred, isProjectContainer, isIgnoredDaily, ignoreForDashboard,
     noDeadline, overdue, overdueDays, dueToday, dueSoon, deadlineDeltaDays,
-    lastActivity, staleDays, stale7, stale14, waitingControlDays, noParent,
+    firstSeen, controlSince, overdueSince, observedUnchangedSince, staleDays, stale7, stale14, waitingControlDays, noParent,
     controlEscalationOwners, controlEscalationLabel
   };
 
@@ -575,6 +640,7 @@ function normalizeTask(row, index, asOf, exportFile) {
 }
 
 function calculateRisk(task) {
+  if (task.isCompleted) return { score: 0, color: 'green', label: 'Зеленый' };
   let score = 0;
   if (task.overdue) score += 50 + Math.min(30, task.overdueDays);
   if (task.dueToday) score += 35;
@@ -641,7 +707,7 @@ function getDigestSignalLabel(task) {
   if (task.dueToday) return 'Срок сегодня';
   if (task.dueSoon) return `Срок скоро (${task.deadlineDeltaDays} дн.)`;
   if (task.noDeadline) return 'Нет срока';
-  if (task.stale14) return `Нет активности ${task.staleDays} дн.`;
+  if (task.stale14) return `Без изменений в наблюдениях ${task.staleDays} дн.`;
   return 'Информационно';
 }
 
@@ -678,13 +744,14 @@ function buildSystemComment(task) {
   if (task.overdue && !task.isWaitingControl) parts.push(`просрочено ${task.overdueDays} дн.`);
   else if (task.overdue) parts.push(`формально просрочено ${task.overdueDays} дн., но мяч у приемки`);
   if (task.noDeadline) parts.push('нет срока');
-  if (task.stale14) parts.push(`нет активности ${task.staleDays} дн.`);
+  if (task.stale14) parts.push(`без изменений в наблюдениях ${task.staleDays} дн.`);
   if (task.noParent) parts.push('нет родителя');
   if (task.isWaitingControl) parts.push('ждёт контроля');
   return parts.join('; ') || 'норма';
 }
 
 function renderAll() {
+  renderSnapshotContext();
   renderUploadReport();
   const tasks = getFilteredTasks();
   renderCoordinatorBrief(tasks);
@@ -702,6 +769,10 @@ function renderAll() {
 
 function getFilteredTasks() {
   return state.tasks.filter(task => {
+    if (state.filters.quick === 'overdue' && !task.overdue) return false;
+    if (state.filters.quick === 'control' && !task.isWaitingControl) return false;
+    if (state.filters.quick === 'noDeadline' && !task.noDeadline) return false;
+    if (state.filters.quick === 'today' && !task.dueToday) return false;
     if (state.filters.responsible && task.responsible !== state.filters.responsible) return false;
     if (state.filters.project && task.project !== state.filters.project) return false;
     if (state.filters.status && task.status !== state.filters.status) return false;
@@ -762,7 +833,7 @@ function getTaskActionReason(task) {
   if (task.riskScore >= 80) return `красный риск ${task.riskScore}`;
   if (task.riskScore >= settings.actionOnly.minRiskScore) return `риск ${task.riskScore}`;
   if (task.noDeadline) return 'нет крайнего срока';
-  if (task.stale14) return `нет активности ${task.staleDays} дн.`;
+  if (task.stale14) return `без изменений в наблюдениях ${task.staleDays} дн.`;
   if (task.dueSoon) return `срок через ${task.deadlineDeltaDays} дн.`;
   return 'нет срочного сигнала';
 }
@@ -977,7 +1048,7 @@ function renderUploadReport() {
   const report = buildExportReport();
   const compareText = report.hasPrevious
     ? `Сравнение с предыдущей выгрузкой: ${report.previousFile}`
-    : 'Предыдущая выгрузка не найдена — показан базовый срез без динамики.';
+    : 'Начальный срез: события до 16 сентября не учитываются.';
 
   const signalMovementRows = filterHighSignalMovementRows(report.movementRows);
   const movementHtml = report.hasPrevious
@@ -1064,12 +1135,12 @@ function renderUploadReport() {
 function buildExportReport() {
   const current = state.tasks || [];
   const previous = state.previousTasks || [];
-  const hasPrevious = previous.length > 0;
-  const diff = compareTaskSnapshots(current, previous);
+  const hasPrevious = state.previousLoaded;
+  const diff = compareTaskSnapshots(current, hasPrevious ? previous : current);
   const metrics = buildMetricSnapshot(current);
   const previousMetrics = hasPrevious ? buildMetricSnapshot(previous) : null;
-  const peopleRows = buildReportPeopleRows(current, previous);
-  const projectRows = buildReportProjectRows(current, previous);
+  const peopleRows = buildReportPeopleRows(current, hasPrevious ? previous : current);
+  const projectRows = buildReportProjectRows(current, hasPrevious ? previous : current);
   const movementRows = buildMovementRows(diff);
   const topRiskTasks = [...current]
     .filter(t => t.riskScore > 0)
@@ -1274,7 +1345,7 @@ function buildReportCsvRows(report) {
     ['Ближайшие 3 дня', 'dueSoon'],
     ['Ждёт контроля', 'waitingControl'],
     ['Без срока', 'noDeadline'],
-    ['Нет активности >14', 'stale14'],
+    ['Без изменений в наблюдениях >14', 'stale14'],
     ['Красный/оранжевый риск', 'highRisk'],
     ['Средний риск', 'avgRisk']
   ].map(([label, key]) => ({
@@ -1387,7 +1458,7 @@ function renderPeople(tasks) {
 }
 
 function summarizePeople(tasks) {
-  const groups = groupBy(tasks, t => t.responsible || 'Не указан');
+  const groups = groupBy(tasks.filter(t => !t.isCompleted), t => t.responsible || 'Не указан');
   return Object.entries(groups).map(([responsible, rows]) => {
     const total = rows.length;
     const ownedRows = rows.filter(responsibleOwnsTaskRisk);
@@ -1465,7 +1536,7 @@ function renderProjects(tasks) {
 }
 
 function summarizeProjects(tasks) {
-  const groups = groupBy(tasks, t => t.project || 'Без проекта / без родительской задачи');
+  const groups = groupBy(tasks.filter(t => !t.isCompleted), t => t.project || 'Без проекта / без родительской задачи');
   return Object.entries(groups).map(([project, rows]) => {
     const total = rows.length;
     const overdue = count(rows, t => t.overdue && !t.isWaitingControl);
@@ -1496,7 +1567,7 @@ function renderControl(tasks) {
     ['Что сделать', t => `<div class="action action-strong">${escapeHtml(getTaskNextAction(t))}</div>`],
     ['Задача', t => `<div class="task-title">${escapeHtml(t.title)}</div><div class="small">ID: ${escapeHtml(t.id)} · Исполнитель: ${escapeHtml(t.responsible || 'не указан')}</div>`],
     ['Проект', t => `<div class="project-name">${escapeHtml(t.project)}</div>`],
-    ['Изменена', t => formatDateTime(t.changed)]
+    ['На контроле с (наблюдение)', t => formatDateTime(t.controlSince)]
   ]);
 }
 
@@ -1504,7 +1575,7 @@ function renderHygiene(tasks) {
   const issues = buildHygieneIssues(tasks);
   const kpis = [
     ['Без срока', count(tasks, t => t.noDeadline), 'Назначить дедлайн', 'gray'],
-    ['Нет активности >14', count(tasks, t => t.stale14), 'Запросить статус', 'orange'],
+    ['Без изменений в наблюдениях >14', count(tasks, t => t.stale14), 'Запросить статус', 'orange'],
     [`Приемка ${settings.waitingControlRedDays}+ дн.`, count(tasks, t => t.isLongWaitingControl), 'Снять зависание', 'red'],
     ['Ждёт контроля', count(tasks, t => t.isWaitingControl), 'Разобрать inbox', 'blue']
   ];
@@ -1523,7 +1594,7 @@ function buildHygieneIssues(tasks) {
     if (t.isLongWaitingControl) issues.push(issueRow(t, `Приемка ${t.waitingControlDays} дн.`, 'red', 'Принять, закрыть или вернуть результат'));
     else if (t.isWaitingControl) issues.push(issueRow(t, `Ждёт контроля ${t.waitingControlDays || 0} дн.`, t.isObserverVisibleControl ? 'blue' : 'orange', 'Проверить результат'));
     if (t.noDeadline) issues.push(issueRow(t, 'Нет срока', 'gray', 'Назначить крайний срок'));
-    if (t.stale14) issues.push(issueRow(t, `Нет активности ${t.staleDays} дн.`, 'orange', 'Запросить актуальный статус'));
+    if (t.stale14) issues.push(issueRow(t, `Без изменений в наблюдениях ${t.staleDays} дн.`, 'orange', 'Запросить актуальный статус'));
   });
   return issues.sort((a, b) => colorWeight(b.color) - colorWeight(a.color));
 }
@@ -1749,7 +1820,7 @@ function getDigestCategoryLimit(category) {
 function renderDigestTaskCard(item) {
   const task = item.task;
   const deadline = task.deadline ? formatDateTime(task.deadline) : 'срок не указан';
-  const activity = task.lastActivity ? formatDateTime(task.lastActivity) : 'нет данных';
+  const activity = task.observedUnchangedSince ? formatDateTime(task.observedUnchangedSince) : 'нет данных';
   const project = task.project || 'Без проекта';
   const taskKey = makeDigestItemKey(item.person, item.role, task);
   return `
@@ -1778,7 +1849,7 @@ function renderDigestTaskCard(item) {
         <b>${escapeHtml(item.action)}</b>
       </div>
       <div class="digest-task-footer">
-        <span class="small">Ответственный: ${escapeHtml(task.responsible || 'не указан')} · Постановщик: ${escapeHtml(task.author || 'не указан')} · Активность: ${escapeHtml(activity)}</span>
+        <span class="small">Ответственный: ${escapeHtml(task.responsible || 'не указан')} · Постановщик: ${escapeHtml(task.author || 'не указан')} · Без наблюдаемых изменений с: ${escapeHtml(activity)}</span>
         <button class="button button-mini button-light" type="button" data-copy-digest-task="${escapeAttr(taskKey)}">Скопировать задачу</button>
       </div>
     </article>
@@ -1980,7 +2051,7 @@ function renderMiniReportSection(section) {
 function renderMiniReportItem(item) {
   const task = item.task;
   const deadline = task.deadline ? formatDateTime(task.deadline) : 'срок не указан';
-  const activity = task.lastActivity ? formatDateTime(task.lastActivity) : 'нет данных';
+  const activity = task.observedUnchangedSince ? formatDateTime(task.observedUnchangedSince) : 'нет данных';
   const meta = [task.project || 'Без проекта', `Статус: ${task.status || 'не указан'}`, `Срок: ${deadline}`].join(' · ');
   return `
     <article class="mini-report-item ${escapeAttr(item.color)}">
@@ -1993,7 +2064,7 @@ function renderMiniReportItem(item) {
       </div>
       <div class="mini-report-item-reason"><b>Почему в отчете:</b> ${escapeHtml(item.flags.join('; ') || 'требует внимания')}</div>
       <div class="mini-report-item-reason"><b>Кому сейчас мяч:</b> ${escapeHtml(item.ballOwner || task.ballOwnerLabel || 'не определено')}</div>
-      <div class="mini-report-item-action"><b>Что сделать:</b> ${escapeHtml(item.action)} · Последняя активность: ${escapeHtml(activity)}</div>
+      <div class="mini-report-item-action"><b>Что сделать:</b> ${escapeHtml(item.action)} · Без наблюдаемых изменений с: ${escapeHtml(activity)}</div>
     </article>
   `;
 }
@@ -2213,7 +2284,7 @@ function buildDigestItem(person, role, task, changes) {
     if (controlRed) addFlag(`Эскалация: контроль завис ${task.waitingControlDays} дн.`, 'red', 'red', 1);
     if (task.overdue && task.overdueDays >= 3) addFlag(`Эскалация: просрочено ${task.overdueDays} дн.`, 'red', 'red', 2);
     if (task.riskScore >= 80) addFlag(`Эскалация: красный риск ${task.riskScore}`, 'red', 'red', 3);
-    if (task.stale14) addFlag(`Эскалация: нет активности ${task.staleDays} дн.`, 'red', 'orange', 4);
+    if (task.stale14) addFlag(`Эскалация: без изменений в наблюдениях ${task.staleDays} дн.`, 'red', 'orange', 4);
     if (task.noDeadline && task.stale7) addFlag('Эскалация: задача без срока и без движения', 'red', 'gray', 5);
   } else if (isExecutorSide) {
     if (task.isWaitingControl) {
@@ -2225,7 +2296,7 @@ function buildDigestItem(person, role, task, changes) {
       if (task.dueToday) addFlag('Срок сегодня', 'today', 'orange', 4);
       if (task.dueSoon && !task.dueToday && !task.overdue) addFlag(`Срок в ближайшие ${settings.digest.dueSoonDays} дн.${deadlineDays !== null ? ` (${deadlineDays} дн.)` : ''}`, 'soon', 'yellow', 6);
       if (task.noDeadline) addFlag('Нет крайнего срока', 'hygiene', 'gray', 7);
-      if (task.staleDays !== null && task.staleDays > settings.digest.staleDays) addFlag(`Нет активности ${task.staleDays} дн.`, 'hygiene', 'gray', 8);
+      if (task.staleDays !== null && task.staleDays > settings.digest.staleDays) addFlag(`Без изменений в наблюдениях ${task.staleDays} дн.`, 'hygiene', 'gray', 8);
     }
   } else if (isAuthor) {
     if (task.isWaitingControl) {
@@ -2236,7 +2307,7 @@ function buildDigestItem(person, role, task, changes) {
     if (!task.isWaitingControl && task.dueToday) addFlag('Срок сегодня у исполнителя', 'today', 'orange', 4);
     if (!task.isWaitingControl && task.dueSoon && !task.dueToday && !task.overdue) addFlag(`Скоро срок у исполнителя (${deadlineDays} дн.)`, 'soon', 'yellow', 6);
     if (!task.isWaitingControl && task.noDeadline) addFlag('Поставленная задача без срока', 'hygiene', 'gray', 7);
-    if (!task.isWaitingControl && task.staleDays !== null && task.staleDays > settings.digest.staleDays) addFlag(`Нет активности ${task.staleDays} дн.`, 'hygiene', 'gray', 8);
+    if (!task.isWaitingControl && task.staleDays !== null && task.staleDays > settings.digest.staleDays) addFlag(`Без изменений в наблюдениях ${task.staleDays} дн.`, 'hygiene', 'gray', 8);
   } else if (isObserver) {
     if (task.isWaitingControl) {
       if (controlRed) addFlag(`Контроль завис ${task.waitingControlDays} дн.`, 'red', 'red', 1);
@@ -2244,7 +2315,7 @@ function buildDigestItem(person, role, task, changes) {
     }
     if (!task.isWaitingControl && task.overdue && task.overdueDays >= settings.digest.observerOverdueDays) addFlag(`Долгая просрочка ${task.overdueDays} дн.`, 'red', 'red', 4);
     if (task.riskScore >= 80) addFlag(`Красный риск ${task.riskScore}`, 'red', 'red', 5);
-    if (task.staleDays !== null && task.staleDays > settings.digest.observerStaleDays) addFlag(`Нет активности ${task.staleDays} дн.`, 'hygiene', 'gray', 8);
+    if (task.staleDays !== null && task.staleDays > settings.digest.observerStaleDays) addFlag(`Без изменений в наблюдениях ${task.staleDays} дн.`, 'hygiene', 'gray', 8);
   }
 
   if (!isObserver && !isDepartmentHead && changes.length && !(task.isWaitingControl && isExecutorSide)) {
@@ -2339,7 +2410,7 @@ function buildDigestAction(task, role, flags) {
 
 function buildTaskChangeLookup() {
   const lookup = {};
-  if (!state.previousTasks || !state.previousTasks.length) return lookup;
+  if (!state.previousLoaded) return lookup;
   const diff = compareTaskSnapshots(state.tasks || [], state.previousTasks || []);
   const add = (task, text, color = 'blue', detail = '') => {
     const id = String(task.id || task.title);
@@ -2471,7 +2542,7 @@ function findDigestItemByKey(key) {
 function buildDigestTaskForwardText(item) {
   const task = item.task;
   const deadline = task.deadline ? formatDateTime(task.deadline) : 'срок не указан';
-  const activity = task.lastActivity ? formatDateTime(task.lastActivity) : 'нет данных';
+  const activity = task.observedUnchangedSince ? formatDateTime(task.observedUnchangedSince) : 'нет данных';
   return [
     `[${task.id}] ${task.title}`,
     `Роль: ${item.roleLabel}`,
@@ -2481,7 +2552,7 @@ function buildDigestTaskForwardText(item) {
     `Статус: ${task.status || 'не указан'}`,
     `Срок: ${deadline}`,
     `Риск: ${task.riskLabel} ${task.riskScore}`,
-    `Последняя активность: ${activity}`,
+    `Без наблюдаемых изменений с: ${activity}`,
     `Кому сейчас мяч: ${item.ballOwner || task.ballOwnerLabel || 'не определено'}`,
     `Причина: ${item.flags.join('; ')}`,
     `Действие: ${item.action}`
@@ -2758,6 +2829,7 @@ function buildGanttWindow(tasks, range) {
   } else {
     start = addDays(today, -30); end = addDays(today, 60); dayWidth = 16;
   }
+  start = new Date(Math.max(start.getTime(), startOfDay(BASELINE_DATE).getTime()));
   const days = Math.max(1, diffDays(end, start) + 1);
   return { start, end, days, dayWidth, timelineWidth: days * dayWidth };
 }
@@ -2850,6 +2922,7 @@ function renderGanttTimeline(task, meta, model) {
 }
 
 function renderGanttOverdueTail(deadline, asOf, model) {
+  deadline = new Date(Math.max(deadline.getTime(), BASELINE_DATE.getTime()));
   const startX = datePixel(deadline, model);
   const endX = datePixel(asOf, model);
   if (endX < 0 || startX > model.timelineWidth || endX <= startX) return '';
@@ -2934,7 +3007,7 @@ function addDays(date, amount) {
 }
 
 function renderDynamic() {
-  if (!state.previousTasks.length) {
+  if (!state.previousLoaded) {
     el('dynamicContent').innerHTML = '<p class="muted">Для динамики нужно минимум две выгрузки. Добавьте следующую выгрузку в data/raw/ и data/exports.json.</p>';
     return;
   }
@@ -2995,6 +3068,10 @@ function fillSelect(id, values) {
   const current = el(id).value;
   el(id).innerHTML = '<option value="">Все</option>' + values.map(v => `<option value="${escapeAttr(v)}">${escapeHtml(v)}</option>`).join('');
   if (values.includes(current)) el(id).value = current;
+  else {
+    const key = { filterResponsible: 'responsible', filterProject: 'project', filterStatus: 'status' }[id];
+    if (key) state.filters[key] = '';
+  }
 }
 
 function switchTab(tab) {
@@ -3076,7 +3153,7 @@ function taskCsvRow(t) {
     status: t.status,
     deadline: formatDateTime(t.deadline),
     overdue_days: t.overdueDays,
-    last_activity: formatDateTime(t.lastActivity),
+    observed_unchanged_since: formatDateTime(t.observedUnchangedSince),
     author: t.author,
     co_executors: t.coExecutors.join(', '),
     observers: t.observers.join(', '),
@@ -3212,4 +3289,19 @@ function showStatus(message) {
 function showError(message) {
   el('statusBox').classList.add('error');
   el('statusBox').textContent = message;
+}
+
+function renderSnapshotContext() {
+  const days = Math.max(0, Math.floor((state.exportDate - BASELINE_DATE) / 86400000));
+  el('snapshotContext').innerHTML = `<div><span class="section-eyebrow">Начало наблюдения</span><strong>16 сентября 2026</strong></div>
+    <div><span class="section-eyebrow">Выбранный срез</span><strong>${formatDateTime(state.exportDate)}</strong></div>
+    <div><span class="section-eyebrow">Сравнение</span><strong>${state.previousLoaded ? formatDateTime(parseDateFromFileName(state.previousExportName)) + ' → текущий' : 'Начальная точка · без изменений'}</strong></div>
+    <div><span class="section-eyebrow">Накоплено истории</span><strong>${days} полных дней</strong></div>`;
+  const shown = getFilteredTasks().length;
+  el('filterCount').textContent = `В выборке ${shown} из ${state.tasks.length} задач`;
+  document.querySelectorAll('[data-quick]').forEach(button => {
+    const selected = state.filters.quick === button.dataset.quick;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  });
 }
