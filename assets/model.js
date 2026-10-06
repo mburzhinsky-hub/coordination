@@ -116,7 +116,7 @@ function attentionWhen(task, event) {
 }
 
 function summarizePeopleV2(tasks, presence = {people:{}}, roster = []) {
-  const people = unique([...roster, ...collectPeople(tasks)]).sort((a,b) => a.localeCompare(b, 'ru'));
+  const people = [...ITO_ROSTER];
   return people.map(name => {
     const owned = tasks.filter(t => personKey(t.responsible) === personKey(name));
     const live = owned.filter(t => t.loadRelevant);
@@ -145,8 +145,8 @@ function summarizeProjectsV2(tasks) {
     const attention = rows.filter(t => t.attention === 'critical' || t.attention === 'watch');
     const debt = rows.filter(t => t.debt !== 'none');
     const critical = attention.filter(t => t.attention === 'critical').length;
-    const responsible = mode((live.length ? live : rows).map(t => t.responsible).filter(v => v && v !== 'Не указан')) || '—';
-    const peopleCount = unique(live.map(t => t.responsible).filter(v => v && v !== 'Не указан')).length;
+    const responsible = mode((live.length ? live : rows).map(t => canonicalItoName(t.responsible)).filter(Boolean)) || '—';
+    const peopleCount = unique(live.map(t => canonicalItoName(t.responsible)).filter(Boolean)).length;
     const deadlines = rows.map(t => t.deadline).filter(Boolean).filter(d => d >= new Date(rows[0].snapshotAsOf)).sort((a,b) => a-b);
     const stage = deriveProjectStage(rows);
     const risk = critical ? 'high' : attention.length ? 'medium' : 'none';
@@ -177,7 +177,7 @@ function collectPeople(tasks) {
 }
 
 function mergeRoster(tasks, storedRoster = [], presence = {people:{}}) {
-  return unique([...storedRoster, ...collectPeople(tasks), ...Object.keys(presence.people || {})]).sort((a,b) => a.localeCompare(b,'ru'));
+  return [...ITO_ROSTER];
 }
 
 function taskPlannedHours(task) {
