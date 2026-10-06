@@ -1,86 +1,126 @@
-const {readFileSync} = require('node:fs');
+const { readFileSync } = require('node:fs');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
-const storage = new Map();
+
 const context = vm.createContext({
-  console, window: {addEventListener() {}},
-  localStorage: {getItem: key => storage.get(key), setItem: (key,value) => storage.set(key,value)},
-  assert
+  console,
+  window: { addEventListener() {} },
+  localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
+  Date,
+  Intl,
+  Math,
+  JSON,
+  Set,
+  Map
 });
-vm.runInContext(readFileSync('assets/app.js','utf8'),context);
+for (const file of ['assets/app.js','assets/ui.js','assets/upload.js','assets/normalize.js','assets/model.js','assets/storage.js','assets/helpers.js']) vm.runInContext(readFileSync(file,'utf8'), context);
+
 vm.runInContext(`
-const row = (status = 'Ждёт контроля', extra = {}) => Object.fromEntries(Object.entries({
-  ID: '1', Название: 'Рабочая задача', Статус: status, Исполнитель: 'Инженер', Постановщик: 'Координатор',
-  'Дата создания': '01.07.2026 10:00', 'Дата изменения': '02.07.2026 10:00',
-  'Крайний срок': '10.07.2026 10:00', ...extra
-}).map(([k,v]) => [normalizeHeader(k),v]));
-let history = new Map();
-function snapshot(rows, day) {
-  const date = new Date(2026,8,day,9,52,52);
-  const name = 'tasks_2026-09-' + day + '_09-52-52.xls';
-  history = observeSnapshot(rows,date,name,history);
-  return normalizeRows(rows,date,name,history);
+const assert = globalThis.__assert;
+function row(extra = {}) {
+  return Object.fromEntries(Object.entries({
+    'ID задачи':'1',
+    'Название':'Рабочая задача',
+    'Статус':'Выполняется',
+    'Ответственный':'Инженер',
+    'Постановщик':'Координатор',
+    'Название базовой задачи':'ЦСН - техническая реализация',
+    'Дата создания':'01.09.2026 09:00',
+    'Дата изменения':'01.10.2026 09:00',
+    'Крайний срок':'02.10.2026 18:00',
+    ...extra
+  }).map(([k,v])=>[normalizeHeader(k),v]));
 }
-const base = snapshot([row()],16);
-assert.equal(base[0].waitingControlDays,0);
-assert.equal(base[0].overdueDays,0);
-assert.equal(base[0].staleDays,0);
-assert.equal(base[0].overdue,true);
-assert.equal(base[0].deadline.getMonth(),6); // Keep the real deadline.
-state.tasks=base;
-state.exportName=BASELINE_FILE;
-state.exportDate=BASELINE_DATE;
-assert.equal(buildExportReport().movementRows.length,0);
-assert.equal(buildExportReport().diff.added.length,0);
-assert.ok(buildExportReport().peopleRows.every(p=>p.totalDelta===0));
-assert.ok(buildExportReport().projectRows.every(p=>p.totalDelta===0));
-let next = snapshot([row()],17);
-assert.equal(next[0].waitingControlDays,1);
-assert.equal(next[0].overdueDays,1);
-assert.equal(next[0].staleDays,1);
-next = snapshot([row('Ждёт контроля',{'Дата изменения':'18.09.2026 09:00'})],18);
-assert.equal(next[0].waitingControlDays,2); // Edits do not reset status age.
-assert.equal(next[0].staleDays,0);
-next = snapshot([row('Выполняется')],19);
-assert.equal(next[0].waitingControlDays,0);
-next = snapshot([row()],20);
-assert.equal(next[0].waitingControlDays,0); // Re-entry resets status clock.
-next = snapshot([row()],25);
-assert.equal(next[0].waitingControlDays,5);
-assert.equal(next[0].isLongWaitingControl,true);
-assert.equal(normalizeRows([row('Ждёт выполнения')],BASELINE_DATE,BASELINE_FILE)[0].isCompleted,false);
-assert.equal(normalizeRows([row('Завершена',{'Дата закрытия':'15.09.2026 10:00'})],BASELINE_DATE,BASELINE_FILE).length,0);
-const completed = normalizeRows([row('Завершена',{'Дата закрытия':'17.09.2026 10:00'})],new Date(2026,8,17,12), 'tasks_2026-09-17_12-00.xls');
-assert.equal(completed[0].riskScore,0);
-assert.equal(summarizePeople(completed).length,0);
-assert.equal(normalizeRows([row('Отложена')],BASELINE_DATE,BASELINE_FILE).length,0);
-assert.equal(isAllowedExport('tasks_2026-07-08_10-43-28.xls'),false);
-assert.equal(isAllowedExport('tasks_2026-09-17_10-00.xls'),true);
-assert.equal(isAllowedExport('unknown.xls'),false);
-localStorage.setItem(LOCAL_EXPORTS_STORAGE_KEY,JSON.stringify([
- {name:'tasks_2026-07-08_10-43-28.xls',text:'old'},
- {name:'tasks_2026-09-17_10-00.xls',text:'new'}
-]));
-loadLocalExports();
-assert.equal(state.localExports.length,1);
-assert.equal(state.localExports[0].text,'new');
-assert.equal(JSON.parse(localStorage.getItem(LOCAL_EXPORTS_STORAGE_KEY)).length,1);
-state.tasks=next; state.previousTasks=[]; state.previousLoaded=true;
-assert.equal(buildExportReport().diff.added.length,1); // An empty earlier snapshot is valid.
-state.exportDate=BASELINE_DATE;
-assert.ok(buildGanttWindow(base,'year').start >= startOfDay(BASELINE_DATE));
-console.log('PASS: baseline, history, status transitions, completions, cache migration, empty comparison, Gantt');
-`, context);
-// Optional full export fixture, extracted without altering source data.
-if (process.env.EXPORT_ROWS) {
-  context.rawRows = JSON.parse(readFileSync(process.env.EXPORT_ROWS,'utf8'));
-  vm.runInContext(`
-  const realRows=rawRows.map(r=>Object.fromEntries(Object.entries(r).map(([k,v])=>[normalizeHeader(k),v])));
-  const realHistory=observeSnapshot(realRows,BASELINE_DATE,BASELINE_FILE,new Map());
-  const tasks=normalizeRows(realRows,BASELINE_DATE,BASELINE_FILE,realHistory);
-  assert.ok(tasks.length>0);
-  assert.ok(tasks.every(t=>t.waitingControlDays===0 && t.staleDays===0 && t.overdueDays===0));
-  assert.ok(tasks.filter(t=>t.status==='Ждёт выполнения').every(t=>!t.isCompleted));
-  console.log(JSON.stringify({source:realRows.length,included:tasks.length,excluded:tasks.ignoredCount,control:tasks.filter(t=>t.isWaitingControl).length,overdue:tasks.filter(t=>t.overdue).length}));
-  `,context);
+function snap(rows, iso, previous=null, history=[]) {
+  const d = new Date(iso);
+  return buildSnapshot(rows,d,'tasks_'+formatFileDate(d)+'.xls',previous,history,{errors:[],warnings:[]});
 }
+
+// Project identity comes from the Bitrix parent/base task and normalizes display suffixes.
+let s1 = snap([row()], '2026-10-01T09:00:00');
+assert.equal(s1.tasks[0].project, 'ЦСН');
+assert.equal(s1.tasks[0].projectFullName, 'ЦСН - техническая реализация');
+assert.equal(projectKey('ЦСН — техническая реализация'), projectKey('ЦСН - техническая реализация'));
+
+// New overdue is current attention.
+let s2 = snap([row()], '2026-10-03T09:00:00', s1, [s1]);
+assert.equal(s2.tasks[0].overdue, true);
+assert.equal(s2.tasks[0].overdueDays, 1);
+assert.ok(s2.events.some(e=>e.type==='BECAME_OVERDUE' && e.severity==='critical'));
+assert.equal(s2.tasks[0].attention, 'critical');
+
+// Old unchanged overdue becomes legacy debt and is removed from current attention.
+let old = snap([row({
+  'Дата изменения':'01.07.2026 09:00',
+  'Крайний срок':'01.07.2026 18:00'
+})], '2026-10-06T09:00:00');
+assert.equal(old.tasks[0].debt, 'legacy');
+assert.equal(old.tasks[0].attention, 'none');
+assert.equal(buildAttentionItems(old).length, 0);
+assert.equal(old.tasks[0].loadRelevant, false);
+
+// Legacy task reactivated by a meaningful change returns to attention.
+let reactivated = snap([row({
+  'Статус':'Выполняется',
+  'Ответственный':'Новый инженер',
+  'Дата изменения':'06.10.2026 08:00',
+  'Крайний срок':'01.07.2026 18:00'
+})], '2026-10-06T12:00:00', old, [old]);
+assert.ok(reactivated.events.some(e=>e.type==='REACTIVATED'));
+assert.equal(reactivated.tasks[0].attention, 'critical');
+
+// Moving the deadline forward is not treated as a successful overdue resolution.
+let moved = snap([row({
+  'Дата изменения':'06.10.2026 09:00',
+  'Крайний срок':'20.10.2026 18:00'
+})], '2026-10-06T13:00:00', s2, [s1,s2]);
+assert.ok(moved.events.some(e=>e.type==='OVERDUE_DEADLINE_MOVED'));
+assert.ok(!moved.events.some(e=>e.type==='OVERDUE_RESOLVED_BY_COMPLETION'));
+
+// Completion is a real resolution.
+let completed = snap([row({
+  'Статус':'Завершена',
+  'Дата изменения':'06.10.2026 10:00',
+  'Дата закрытия':'06.10.2026 10:00',
+  'Крайний срок':'02.10.2026 18:00'
+})], '2026-10-06T14:00:00', s2, [s1,s2]);
+assert.ok(completed.events.some(e=>e.type==='OVERDUE_RESOLVED_BY_COMPLETION'));
+
+// Waiting control transfers the ball and does not count as the executor's live load.
+let control1 = snap([row({'Статус':'Ждёт контроля','Дата изменения':'01.10.2026 09:00'})], '2026-10-01T09:00:00');
+let control3 = snap([row({'Статус':'Ждёт контроля','Дата изменения':'01.10.2026 09:00'})], '2026-10-04T09:00:00', control1, [control1]);
+assert.equal(control3.tasks[0].waitingControlDays, 3);
+assert.ok(control3.events.some(e=>e.type==='CONTROL_3_DAYS'));
+assert.equal(control3.tasks[0].ballOwner.type, 'author');
+assert.equal(control3.tasks[0].loadRelevant, false);
+let control5 = snap([row({'Статус':'Ждёт контроля','Дата изменения':'01.10.2026 09:00'})], '2026-10-06T09:00:00', control3, [control1,control3]);
+assert.ok(control5.events.some(e=>e.type==='CONTROL_5_DAYS'));
+
+// Deadline churn becomes a dedicated attention signal.
+let d1 = snap([row({'Крайний срок':'10.10.2026 18:00'})], '2026-10-01T09:00:00');
+let d2 = snap([row({'Крайний срок':'12.10.2026 18:00','Дата изменения':'02.10.2026 09:00'})], '2026-10-02T09:00:00', d1, [d1]);
+let d3 = snap([row({'Крайний срок':'14.10.2026 18:00','Дата изменения':'03.10.2026 09:00'})], '2026-10-03T09:00:00', d2, [d1,d2]);
+let d4 = snap([row({'Крайний срок':'16.10.2026 18:00','Дата изменения':'04.10.2026 09:00'})], '2026-10-04T09:00:00', d3, [d1,d2,d3]);
+assert.ok(d4.events.some(e=>e.type==='DEADLINE_CHURN'));
+
+// Removed task is neutral/unknown, never automatic success.
+let empty = snap([], '2026-10-07T09:00:00', s2, [s1,s2]);
+const removed = empty.events.find(e=>e.type==='TASK_REMOVED');
+assert.ok(removed);
+assert.equal(removed.severity, 'neutral');
+
+// Project containers are structure, not work.
+let containers = snap([row({'ID задачи':'2','Название':'ЦСН - техническая реализация','Название базовой задачи':''})], '2026-10-06T09:00:00');
+assert.equal(containers.tasks.length, 0);
+
+// Missing stable task ID blocks history.
+const headers = ['ID задачи','Название','Статус','Ответственный'].map(normalizeHeader);
+const missingIdQuality = validateRows([row({'ID задачи':''})], headers, null);
+assert.ok(missingIdQuality.errors.some(x=>x.includes('ID')));
+
+// Suspicious export shrink requires confirmation.
+const q = validateRows([row()], headers, { rawCount: 10 });
+assert.equal(q.requiresConfirmation, true);
+
+console.log('PASS: daily events, debt separation, control lifecycle, project identity, quality gate');
+`, Object.assign(context, { __assert: assert }));
