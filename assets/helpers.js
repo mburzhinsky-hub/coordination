@@ -41,6 +41,18 @@ function cleanText(value) { return String(value??'').replace(/\u00a0/g,' ').repl
 function normalizeHeader(value) { return cleanText(value).toLowerCase().replace(/ё/g,'е'); }
 function projectKey(value) { return normalizeHeader(value).replace(/[«»“”„"]/g,'').replace(/[–—−]/g,'-').replace(/\s*-\s*/g,' - ').replace(/\s+/g,' ').trim(); }
 function personKey(value) { return normalizeHeader(value).replace(/\s+/g,' '); }
+function canonicalItoName(value) {
+  const key = personKey(value);
+  if (!key) return '';
+  for (const name of ITO_ROSTER) {
+    const canonicalKey = personKey(name);
+    if (key === canonicalKey) return name;
+    const parts = canonicalKey.split(' ');
+    if (parts.length === 2 && key === parts.slice().reverse().join(' ')) return name;
+  }
+  return '';
+}
+function isItoMember(value) { return Boolean(canonicalItoName(value)); }
 function dateKey(date) { return date ? new Date(date).toISOString().slice(0,16) : ''; }
 function startOfDay(date) { const d=new Date(date); return new Date(d.getFullYear(),d.getMonth(),d.getDate()); }
 function diffDays(a,b) { return Math.floor((startOfDay(a)-startOfDay(b))/86400000); }
