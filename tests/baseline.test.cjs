@@ -36,6 +36,15 @@ function snap(rows, iso, previous=null, history=[]) {
   return buildSnapshot(rows,d,'tasks_'+formatFileDate(d)+'.xls',previous,history,{errors:[],warnings:[]});
 }
 
+// ITO roster is closed: external Bitrix participants never become department employees.
+assert.equal(ITO_ROSTER.length, 12);
+assert.deepEqual(mergeRoster([], ['Внешний сотрудник'], {people:{'Внешний сотрудник':{}}}), ITO_ROSTER);
+assert.equal(canonicalItoName('Буржинский Максим'), 'Максим Буржинский');
+assert.equal(isItoMember('Внешний сотрудник'), false);
+const externalPeople = summarizePeopleV2([normalizeTask(row({'Ответственный':'Внешний сотрудник'}),0,new Date('2026-10-06T09:00:00'),null)], {people:{}}, ['Внешний сотрудник']);
+assert.equal(externalPeople.length, 12);
+assert.ok(!externalPeople.some(p => p.name === 'Внешний сотрудник'));
+
 // Project identity comes from the Bitrix parent/base task and normalizes display suffixes.
 let s1 = snap([row()], '2026-10-01T09:00:00');
 assert.equal(s1.tasks[0].project, 'ЦСН');
