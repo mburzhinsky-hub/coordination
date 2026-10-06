@@ -118,9 +118,9 @@ function attentionWhen(task, event) {
 function summarizePeopleV2(tasks, presence = {people:{}}, roster = []) {
   const people = [...ITO_ROSTER];
   return people.map(name => {
-    const owned = tasks.filter(t => personKey(t.responsible) === personKey(name));
+    const owned = tasks.filter(t => canonicalItoName(t.responsible) === name);
     const live = owned.filter(t => t.loadRelevant);
-    const attentionTasks = tasks.filter(t => (t.attention === 'critical' || t.attention === 'watch') && (t.ballOwner?.people || []).some(p => personKey(p) === personKey(name)));
+    const attentionTasks = tasks.filter(t => (t.attention === 'critical' || t.attention === 'watch') && (t.ballOwner?.people || []).some(p => canonicalItoName(p) === name));
     const debtCount = owned.filter(t => t.debt !== 'none').length;
     const manual = presence.people?.[name] || {};
     const manualProjects = Object.entries(manual).filter(([,v]) => Number(v) > 0).sort((a,b) => Number(b[1]) - Number(a[1]));
