@@ -39,7 +39,7 @@ async function savePendingPresence(useChanges) {
 }
 
 function presenceLevel(presence, person, project) { return Math.max(0, Math.min(3, Number(presence?.people?.[person]?.[project] || 0))); }
-function presenceProjectWeight(presence, project) { return sum(Object.values(presence?.people || {}).map(row => Number(row?.[project] || 0))); }
+function presenceProjectWeight(presence, project) { return sum(Object.entries(presence?.people || {}).filter(([person]) => isItoMember(person)).map(([,row]) => Number(row?.[project] || 0))); }
 
 async function seedRepositorySnapshots() {
   let manifest;
@@ -103,8 +103,8 @@ async function loadPreviousPresence(asOf) {
   const rows = await getAllRecords('presence');
   return rows.filter(row => new Date(row.asOf) < new Date(asOf)).sort((a,b) => new Date(a.asOf) - new Date(b.asOf)).at(-1) || null;
 }
-async function loadRoster() { return (await getRecord('settings','roster'))?.value || mergeRoster(state.currentSnapshot?.tasks || [], [], state.presence); }
-async function saveRoster(roster) { await putRecord('settings',{id:'roster',value:unique(roster)}); }
+async function loadRoster() { return [...ITO_ROSTER]; }
+async function saveRoster(roster) { await putRecord('settings',{id:'roster',value:[...ITO_ROSTER]}); }
 
 function openDb() {
   return new Promise((resolve, reject) => {
