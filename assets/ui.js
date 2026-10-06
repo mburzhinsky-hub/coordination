@@ -16,7 +16,7 @@ function renderOverview(snapshot) {
       ${kpiCard(reserveCount, 'есть резерв', '▥', 'reserve')}
     </div>
     <div class="dashboard-grid">
-      ${renderTeamPanel(people.slice(0, 8))}
+      ${renderTeamPanel(people)}
       ${renderAttentionPanel(attention.slice(0, 4), debtCount)}
     </div>
     <div class="dashboard-grid dashboard-grid-bottom">
@@ -62,7 +62,7 @@ function renderProjectsPanel(projects) {
 
 function renderPresencePanel(people, projects, presence) {
   const rankedProjects = [...projects].sort((a,b) => presenceProjectWeight(presence, b.name) - presenceProjectWeight(presence, a.name) || b.liveTasks - a.liveTasks).slice(0, 4);
-  const shownPeople = people.slice(0, 6);
+  const shownPeople = people;
   return `<section class="panel">
     <div class="panel-head"><h2 class="panel-title">Кто где занят</h2><span class="panel-menu">•••</span></div>
     ${rankedProjects.length ? `<table class="presence-table"><thead><tr><th></th>${rankedProjects.map(p => `<th title="${escapeAttr(p.name)}">${escapeHtml(shortLabel(p.name, 14))}</th>`).join('')}</tr></thead><tbody>
