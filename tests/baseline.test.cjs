@@ -41,6 +41,10 @@ assert.equal(ITO_ROSTER.length, 12);
 assert.deepEqual(mergeRoster([], ['Внешний сотрудник'], {people:{'Внешний сотрудник':{}}}), ITO_ROSTER);
 assert.equal(canonicalItoName('Буржинский Максим'), 'Максим Буржинский');
 assert.equal(isItoMember('Внешний сотрудник'), false);
+// Bitrix reverse name order is assigned to the correct ITO employee.
+const reversed = normalizeTask(row({'Ответственный':'Буржинский Максим'}),0,new Date('2026-10-06T09:00:00'),null);
+const reversedPeople = summarizePeopleV2([reversed], {people:{}}, []);
+assert.equal(reversedPeople.find(p => p.name === 'Максим Буржинский').liveCount, 1);
 const externalPeople = summarizePeopleV2([normalizeTask(row({'Ответственный':'Внешний сотрудник'}),0,new Date('2026-10-06T09:00:00'),null)], {people:{}}, ['Внешний сотрудник']);
 assert.equal(externalPeople.length, 12);
 assert.ok(!externalPeople.some(p => p.name === 'Внешний сотрудник'));
