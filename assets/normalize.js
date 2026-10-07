@@ -85,10 +85,13 @@ function normalizeTask(row, index, asOf, previousTask = null) {
   const parentTitle = get('Название базовой задачи','Базовая задача','Родительская задача');
   const parentId = get('ID базовой задачи','ID родительской задачи');
   const projectRaw = get('Проект','Группа','Рабочая группа');
-  const resolvedProject = resolveItoProject(projectRaw, parentTitle, title);
+  const assignment = resolveProjectAssignment(projectRaw, parentTitle, title);
+  const resolvedProject = assignment.project;
   const projectId = resolvedProject?.id || '';
-  const projectFullName = resolvedProject?.fullName || projectRaw || parentTitle || 'Вне активных проектов';
-  const project = resolvedProject?.name || 'Вне активных проектов';
+  const projectFullName = resolvedProject?.fullName || projectRaw || parentTitle || 'Операционная работа';
+  const project = resolvedProject?.name || 'Операционная работа';
+  const workstream = projectId ? 'project' : 'operational';
+  const operationalBucket = projectId ? '' : classifyOperationalBucket(title, parentTitle, projectRaw);
   const deadline = parseBitrixDate(get('Крайний срок','Срок','Дедлайн'));
   const actualStart = parseBitrixDate(get('Дата начала работы','Дата старта','Фактическая дата начала'));
   const plannedStart = parseBitrixDate(get('Планируемая дата начала','Плановая дата начала'));
@@ -121,7 +124,18 @@ function normalizeTask(row, index, asOf, previousTask = null) {
   const observedQuietDays = Math.max(0, diffDays(asOf, quietSince));
   const bitrixInactiveDays = Math.max(0, diffDays(asOf, changed || created || asOf));
   const inactivityDays = Math.max(observedQuietDays, bitrixInactiveDays);
-  const controlSince = isWaitingControl ? (previousTask?.isWaitingControl ? new Date(previousTask.controlSince || previousTask.snapshotAsOf) : asOf) : null;
+  let controlAgeEstimated = false;
+  let controlSince = null;
+  if (isWaitingControl) {
+    if (previousTask?.isWaitingControl) {
+      controlSince = new Date(previousTask.controlSince || previousTask.snapshotAsOf);
+      controlAgeEstimated = Boolean(previousTask.controlAgeEstimated);
+    } else {
+      const fallback = changed && changed <= asOf ? changed : asOf;
+      controlSince = fallback;
+      controlAgeEstimated = Boolean(changed && changed < asOf);
+    }
+  }
   const waitingControlDays = isWaitingControl && controlSince ? Math.max(0, diffDays(asOf, controlSince)) : 0;
   let deadlineHistory = Array.isArray(previousTask?.deadlineHistory) ? previousTask.deadlineHistory.map(x => ({...x})) : [];
   if (previousTask && dateKey(previousTask.deadline) !== dateKey(deadline)) deadlineHistory.push({ at: asOf.toISOString(), value: dateKey(deadline) });
@@ -148,12 +162,13 @@ function normalizeTask(row, index, asOf, previousTask = null) {
   const loadRelevant = Boolean(!isCompleted && !isDeferred && !isProjectContainer && !isWaitingControl && debt === 'none' && activity !== 'stale');
   return {
     id: String(id || ''), title, description, status, responsible, author, creator, coExecutors, observers,
-    parentTitle, parentId, projectRaw, projectId, projectFullName, project,
+    parentTitle, parentId, projectRaw, projectId, projectFullName, project, workstream, operationalBucket,
+    projectFromField: assignment.projectFromField, projectFromParent: assignment.projectFromParent, projectFromTitle: assignment.projectFromTitle, projectConflict: assignment.projectConflict,
     deadline, actualStart, plannedStart, plannedEnd, created, changed, closed, estimate, spent, planned,
     isCompleted, isWaitingControl, isInProgress, isDeferred, isProjectContainer, isIgnoredDaily, ignoreForDashboard,
     noDeadline, overdue, overdueDays, deadlineDeltaDays, dueToday, dueSoon,
     signature, snapshotAsOf: asOf.toISOString(), quietSince: quietSince.toISOString(), observedQuietDays, bitrixInactiveDays, inactivityDays,
-    controlSince: controlSince ? controlSince.toISOString() : null, waitingControlDays, deadlineHistory,
+    controlSince: controlSince ? controlSince.toISOString() : null, controlAgeEstimated, waitingControlDays, deadlineHistory,
     activity, debt, attention, attentionReason, ballOwner, loadRelevant
   };
 }
