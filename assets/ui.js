@@ -35,7 +35,7 @@ function renderTeamPanel(people) {
     <table class="data-table team-table"><thead><tr><th style="width:27%">Сотрудник</th><th style="width:30%">Сейчас в работе</th><th style="width:11%">Проекты</th><th style="width:10%">Задач</th><th style="width:22%">Статус</th></tr></thead><tbody>
       ${people.map(person => `<tr>
         <td><div class="person-cell"><span class="avatar">${escapeHtml(initials(person.name))}</span><span class="person-name">${escapeHtml(person.name)}</span></div></td>
-        <td title="${escapeAttr(person.focus)}">${escapeHtml(person.focus || '—')}</td>
+        <td>${person.focusTaskId ? `<button class="task-link task-link-compact" type="button" data-task-id="${escapeAttr(person.focusTaskId)}" title="${escapeAttr(person.focus)}">${escapeHtml(person.focus || '—')}</button>` : escapeHtml(person.focus || '—')}</td>
         <td>${person.projectCount}</td><td>${person.liveCount}</td>
         <td>${statusPill(person.status)}</td>
       </tr>`).join('') || `<tr><td colspan="5">Нет сотрудников в текущем срезе.</td></tr>`}
@@ -46,7 +46,7 @@ function renderTeamPanel(people) {
 function renderAttentionPanel(items, debtCount) {
   return `<section class="panel">
     <div class="panel-head"><h2 class="panel-title">Требует внимания</h2><button class="panel-link" data-open-view="attention">все →</button></div>
-    ${items.length ? `<div class="attention-list">${items.map(item => `<div class="attention-row"><span class="signal-dot ${item.severity}"></span><div class="attention-main"><strong>${escapeHtml(item.project)}</strong> — ${escapeHtml(item.label)}</div><div class="attention-age ${item.severity}">${escapeHtml(item.when)}</div></div>`).join('')}</div>` : `<div class="attention-empty">Новых оперативных сигналов нет.</div>`}
+    ${items.length ? `<div class="attention-list">${items.map(item => `<button class="attention-row attention-row-button" type="button" data-task-id="${escapeAttr(item.taskId)}"><span class="signal-dot ${item.severity}"></span><div class="attention-main"><div class="attention-project">${escapeHtml(item.project)}</div><div class="attention-task-title">${escapeHtml(item.detail)}</div><div class="attention-reason">${escapeHtml(item.label)}</div></div><div class="attention-age ${item.severity}">${escapeHtml(item.when)}</div></button>`).join('')}</div>` : `<div class="attention-empty">Новых оперативных сигналов нет.</div>`}
     <div class="debt-link"><span>Старый долг</span><span>${debtCount}</span></div>
   </section>`;
 }
@@ -111,8 +111,8 @@ function renderAttentionView(snapshot) {
   const debt = snapshot.tasks.filter(t => t.debt && t.debt !== 'none').sort((a,b) => b.overdueDays - a.overdueDays);
   document.getElementById('viewRoot').innerHTML = `<section class="view-card">
     <div class="view-head"><div><h2>Внимание</h2><p>Fresh attention отделён от накопленного долга.</p></div><div class="summary-strip"><span class="summary-chip">сейчас ${items.length}</span><span class="summary-chip">старый долг ${debt.length}</span></div></div>
-    <div class="attention-full-list">${items.map(item => `<article class="attention-card"><i class="signal-dot ${item.severity}"></i><div><h3>${escapeHtml(item.project)} — ${escapeHtml(item.label)}</h3><p>${escapeHtml(item.detail)}${item.owner ? ` · Мяч: ${escapeHtml(item.owner)}` : ''}</p></div><div class="attention-meta">${escapeHtml(item.when)}</div></article>`).join('') || '<div class="attention-empty">Оперативных сигналов нет.</div>'}</div>
-    <details class="debt-section"><summary>Старый долг · ${debt.length}</summary>${debt.length ? `<table class="data-table detail-table"><thead><tr><th>Задача</th><th>Проект</th><th>Ответственный</th><th>Просрочка</th><th>Без движения</th><th>Класс</th></tr></thead><tbody>${debt.map(t => `<tr><td>${escapeHtml(t.title)}</td><td>${escapeHtml(t.project)}</td><td>${escapeHtml(t.responsible)}</td><td>${t.overdueDays ? `${t.overdueDays} дн.` : '—'}</td><td>${t.inactivityDays} дн.</td><td>${escapeHtml(t.debt)}</td></tr>`).join('')}</tbody></table>` : ''}</details>
+    <div class="attention-full-list">${items.map(item => `<button class="attention-card task-card-button" type="button" data-task-id="${escapeAttr(item.taskId)}"><i class="signal-dot ${item.severity}"></i><div><div class="attention-project">${escapeHtml(item.project)}</div><h3>${escapeHtml(item.detail)}</h3><p>${escapeHtml(item.label)}${item.owner ? ` · Мяч: ${escapeHtml(item.owner)}` : ''}</p></div><div class="attention-meta">${escapeHtml(item.when)}</div></button>`).join('') || '<div class="attention-empty">Оперативных сигналов нет.</div>'}</div>
+    <details class="debt-section"><summary>Старый долг · ${debt.length}</summary>${debt.length ? `<table class="data-table detail-table"><thead><tr><th>Задача</th><th>Проект</th><th>Ответственный</th><th>Просрочка</th><th>Без движения</th><th>Класс</th></tr></thead><tbody>${debt.map(t => `<tr><td><button class="task-link task-link-table" type="button" data-task-id="${escapeAttr(t.id)}" title="${escapeAttr(t.title)}">${escapeHtml(t.title)}</button></td><td>${escapeHtml(t.project)}</td><td>${escapeHtml(t.responsible)}</td><td>${t.overdueDays ? `${t.overdueDays} дн.` : '—'}</td><td>${t.inactivityDays} дн.</td><td>${escapeHtml(t.debt)}</td></tr>`).join('')}</tbody></table>` : ''}</details>
   </section>`;
 }
 
@@ -121,7 +121,7 @@ function renderPlanView(snapshot) {
   const maxDays = Math.max(1, ...tasks.map(t => Math.max(0, diffDays(t.deadline, new Date(snapshot.asOf)))));
   document.getElementById('viewRoot').innerHTML = `<section class="view-card">
     <div class="view-head"><div><h2>План</h2><p>Ближайшие сроки без legacy-задач.</p></div><div class="summary-strip"><span class="summary-chip">на шкале ${tasks.length}</span></div></div>
-    <div class="plan-list">${tasks.map(t => { const days = diffDays(t.deadline, new Date(snapshot.asOf)); const width = Math.max(5, Math.min(100, ((Math.max(0, days) + 1) / (maxDays + 1)) * 100)); return `<div class="plan-row ${t.attention === 'critical' ? 'critical' : ''}"><div class="plan-date">${escapeHtml(formatDateShort(t.deadline))}</div><div>${escapeHtml(shortLabel(t.project, 24))}</div><div><div>${escapeHtml(t.title)}</div><div class="plan-bar"><span style="width:${width}%"></span></div></div><div>${escapeHtml(t.responsible)}</div></div>`; }).join('') || '<div class="attention-empty">Нет задач со сроками.</div>'}</div>
+    <div class="plan-list">${tasks.map(t => { const days = diffDays(t.deadline, new Date(snapshot.asOf)); const width = Math.max(5, Math.min(100, ((Math.max(0, days) + 1) / (maxDays + 1)) * 100)); return `<div class="plan-row ${t.attention === 'critical' ? 'critical' : ''}"><div class="plan-date">${escapeHtml(formatDateShort(t.deadline))}</div><div>${escapeHtml(shortLabel(t.project, 24))}</div><div><button class="task-link task-link-plan" type="button" data-task-id="${escapeAttr(t.id)}" title="${escapeAttr(t.title)}">${escapeHtml(t.title)}</button><div class="plan-bar"><span style="width:${width}%"></span></div></div><div>${escapeHtml(t.responsible)}</div></div>`; }).join('') || '<div class="attention-empty">Нет задач со сроками.</div>'}</div>
   </section>`;
 }
 
@@ -136,3 +136,35 @@ function renderLoading(text) { document.getElementById('viewRoot').innerHTML = `
 function renderEmpty() { document.getElementById('viewRoot').innerHTML = `<div class="loading-state">Нет данных. Нажмите «Обновить» и выберите выгрузку задач из Bitrix.</div>`; document.getElementById('updatedAt').textContent = 'Нет данных'; }
 function renderError(message) { document.getElementById('viewRoot').innerHTML = `<div class="error-state"><strong>Не удалось обработать данные.</strong><div style="margin-top:8px">${escapeHtml(message)}</div></div>`; }
 
+
+
+function openTaskDetail(taskId) {
+  const task = state.currentSnapshot?.tasks?.find(item => String(item.id) === String(taskId));
+  if (!task) return;
+  const dialog = document.getElementById('taskDialog');
+  if (!dialog) return;
+  document.getElementById('taskDetailProject').textContent =
+    task.project && task.project !== 'Вне активных проектов' ? task.project : 'ЗАДАЧА';
+  document.getElementById('taskDetailTitle').textContent = task.title || 'Без названия';
+  const meta = [
+    task.responsible ? `Ответственный · ${task.responsible}` : '',
+    task.status ? `Статус · ${task.status}` : '',
+    task.deadline ? `Срок · ${formatDateTime(task.deadline)}` : 'Без срока',
+    task.id ? `ID · ${task.id}` : ''
+  ].filter(Boolean);
+  document.getElementById('taskDetailMeta').innerHTML =
+    meta.map(value => `<span>${escapeHtml(value)}</span>`).join('');
+  const description = cleanText(task.description || '');
+  document.getElementById('taskDetailDescription').textContent =
+    description || 'Описание в выгрузке не заполнено.';
+  const parentWrap = document.getElementById('taskDetailParentWrap');
+  const parent = document.getElementById('taskDetailParent');
+  if (task.parentTitle) {
+    parent.textContent = task.parentTitle;
+    parentWrap.hidden = false;
+  } else {
+    parent.textContent = '';
+    parentWrap.hidden = true;
+  }
+  dialog.showModal();
+}
