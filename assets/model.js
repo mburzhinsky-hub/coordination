@@ -257,3 +257,44 @@ function relativeMovement(value, asOf) {
   if (days === 1) return 'вчера';
   return `${days} дн. назад`;
 }
+
+
+function summarizePossibleOverload(tasks, people) {
+  return people.map(person => {
+    const activeTasks = tasks.filter(t => canonicalItoName(t.responsible) === person.name && t.loadRelevant);
+    const urgentTasks = activeTasks.filter(t => t.dueToday || t.dueSoon || (t.overdue && t.debt === 'none'));
+    let score = 0;
+    const reasons = [];
+    if (person.activeCount >= 6) {
+      score += 2;
+      reasons.push(`${person.activeCount} активных`);
+    } else if (person.activeCount >= 4) {
+      score += 1;
+      reasons.push(`${person.activeCount} активных`);
+    }
+    if (person.projectCount >= 3) {
+      score += 1;
+      reasons.push(`${person.projectCount} проекта одновременно`);
+    }
+    if (person.freshAttentionCount >= 2) {
+      score += 1;
+      reasons.push(`${person.freshAttentionCount} свежих сигнала`);
+    }
+    if (urgentTasks.length >= 2) {
+      score += 1;
+      reasons.push(`${urgentTasks.length} срочных`);
+    }
+    if (person.presenceMode === 'vacation') score = 0;
+    return {
+      name: person.name,
+      score,
+      level: score >= 4 ? 'high' : score >= 2 ? 'watch' : 'none',
+      reasons,
+      activeCount: person.activeCount,
+      projectCount: person.projectCount,
+      freshAttentionCount: person.freshAttentionCount,
+      urgentCount: urgentTasks.length
+    };
+  }).filter(item => item.score >= 2)
+    .sort((a,b) => b.score - a.score || b.activeCount - a.activeCount || a.name.localeCompare(b.name, 'ru'));
+}
