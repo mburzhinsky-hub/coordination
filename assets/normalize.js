@@ -75,6 +75,7 @@ function normalizeTask(row, index, asOf, previousTask = null) {
   const get = (...names) => getRowValue(row, ...names);
   const id = get('ID','ID задачи','Идентификатор');
   const title = get('Название','Задача','Наименование') || `Без названия ${index + 1}`;
+  const description = get('Описание');
   const status = get('Статус');
   const responsible = get('Ответственный','Исполнитель') || 'Не указан';
   const creator = get('Создатель');
@@ -84,7 +85,7 @@ function normalizeTask(row, index, asOf, previousTask = null) {
   const parentTitle = get('Название базовой задачи','Базовая задача','Родительская задача');
   const parentId = get('ID базовой задачи','ID родительской задачи');
   const projectRaw = get('Проект','Группа','Рабочая группа');
-  const resolvedProject = resolveItoProject(projectRaw, parentTitle);
+  const resolvedProject = resolveItoProject(projectRaw, parentTitle, title);
   const projectId = resolvedProject?.id || '';
   const projectFullName = resolvedProject?.fullName || projectRaw || parentTitle || 'Вне активных проектов';
   const project = resolvedProject?.name || 'Вне активных проектов';
@@ -146,7 +147,7 @@ function normalizeTask(row, index, asOf, previousTask = null) {
   const ballOwner = deriveBallOwner({ isWaitingControl, responsible, author, observers, attention, noDeadline, isCompleted });
   const loadRelevant = Boolean(!isCompleted && !isDeferred && !isProjectContainer && !isWaitingControl && debt === 'none' && activity !== 'stale');
   return {
-    id: String(id || ''), title, status, responsible, author, creator, coExecutors, observers,
+    id: String(id || ''), title, description, status, responsible, author, creator, coExecutors, observers,
     parentTitle, parentId, projectRaw, projectId, projectFullName, project,
     deadline, actualStart, plannedStart, plannedEnd, created, changed, closed, estimate, spent, planned,
     isCompleted, isWaitingControl, isInProgress, isDeferred, isProjectContainer, isIgnoredDaily, ignoreForDashboard,
