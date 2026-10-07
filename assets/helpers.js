@@ -69,6 +69,7 @@ function parseBitrixDate(value) { const text=cleanText(value); if(!text)return n
 function parseNumber(value) { const m=cleanText(value).replace(',','.').match(/-?\d+(?:\.\d+)?/); return m?Number(m[0]):0; }
 function splitPeople(value) { return unique(cleanText(value).split(/[,;\n]+/).map(cleanText).filter(Boolean)); }
 function cleanText(value) { return String(value??'').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim(); }
+function cleanMultilineText(value) { return String(value??'').replace(/\u00a0/g,' ').replace(/\r\n?/g,'\n').split('\n').map(line => line.replace(/[ \t]+/g,' ').trim()).join('\n').replace(/\n{3,}/g,'\n\n').trim(); }
 function normalizeHeader(value) { return cleanText(value).toLowerCase().replace(/ё/g,'е'); }
 function projectKey(value) { return normalizeHeader(value).replace(/[«»“”„"]/g,'').replace(/_/g,' ').replace(/[–—−]/g,'-').replace(/\s*-\s*/g,' - ').replace(/\s+/g,' ').trim(); }
 function personKey(value) { return normalizeHeader(value).replace(/\s+/g,' '); }
