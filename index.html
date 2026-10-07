@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#f6f6f4" />
   <title>ИТО — Обзор</title>
-  <link rel="stylesheet" href="assets/style.css?v=20261007c" />
+  <link rel="stylesheet" href="assets/style.css?v=20261007d" />
 </head>
 <body>
   <div class="app-shell">
@@ -38,6 +38,27 @@
     </main>
   </div>
 
+  <dialog id="taskDialog" class="task-dialog">
+    <div class="task-detail-card">
+      <div class="task-detail-head">
+        <div>
+          <div id="taskDetailProject" class="eyebrow"></div>
+          <h2 id="taskDetailTitle"></h2>
+        </div>
+        <button id="taskDetailClose" class="icon-button" type="button" aria-label="Закрыть">×</button>
+      </div>
+      <div id="taskDetailMeta" class="task-detail-meta"></div>
+      <div class="task-detail-section">
+        <div class="task-detail-label">Описание</div>
+        <div id="taskDetailDescription" class="task-detail-description"></div>
+      </div>
+      <div id="taskDetailParentWrap" class="task-detail-section" hidden>
+        <div class="task-detail-label">Родительская задача</div>
+        <div id="taskDetailParent" class="task-detail-parent"></div>
+      </div>
+    </div>
+  </dialog>
+
   <dialog id="presenceDialog" class="presence-dialog">
     <form method="dialog" class="presence-card" id="presenceForm">
       <div class="presence-head">
@@ -57,12 +78,12 @@
     </form>
   </dialog>
 
-  <script src="assets/app.js?v=20261007c"></script>
-  <script src="assets/ui.js?v=20261007c"></script>
-  <script src="assets/upload.js?v=20261007c"></script>
-  <script src="assets/normalize.js?v=20261007c"></script>
-  <script src="assets/model.js?v=20261007c"></script>
-  <script src="assets/storage.js?v=20261007c"></script>
-  <script src="assets/helpers.js?v=20261007c"></script>
+  <script src="assets/app.js?v=20261007d"></script>
+  <script src="assets/ui.js?v=20261007d"></script>
+  <script src="assets/upload.js?v=20261007d"></script>
+  <script src="assets/normalize.js?v=20261007d"></script>
+  <script src="assets/model.js?v=20261007d"></script>
+  <script src="assets/storage.js?v=20261007d"></script>
+  <script src="assets/helpers.js?v=20261007d"></script>
 </body>
 </html>
