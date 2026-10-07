@@ -100,7 +100,7 @@ async function init() {
   try {
     state.db = await openDb();
     if (state.sharedMode) await migrateIndexedDbToSharedIfEmpty();
-    await migrateLegacyExports();
+    else await migrateLegacyExports();
     await seedRepositorySnapshots();
     await refreshSnapshots();
     if (!state.snapshots.length) {
