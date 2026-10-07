@@ -45,7 +45,7 @@ assert.equal(isItoMember('Внешний сотрудник'), false);
 // Bitrix reverse name order is assigned to the correct ITO employee.
 const reversed = normalizeTask(row({'Ответственный':'Буржинский Максим'}),0,new Date('2026-10-06T09:00:00'),null);
 const reversedPeople = summarizePeopleV2([reversed], {people:{}}, []);
-assert.equal(reversedPeople.find(p => p.name === 'Максим Буржинский').liveCount, 1);
+assert.equal(reversedPeople.find(p => p.name === 'Максим Буржинский').activeCount, 1);
 const externalPeople = summarizePeopleV2([normalizeTask(row({'Ответственный':'Внешний сотрудник'}),0,new Date('2026-10-06T09:00:00'),null)], {people:{}}, ['Внешний сотрудник']);
 assert.equal(externalPeople.length, 12);
 assert.ok(!externalPeople.some(p => p.name === 'Внешний сотрудник'));
@@ -88,6 +88,16 @@ const explicitProject = normalizeTask(row({
 assert.equal(explicitProject.projectId, 'luzhniki');
 assert.equal(explicitProject.project, 'Лужники');
 
+// Project-parent conflict is explicit data quality; recognized parent wins.
+const projectConflict = normalizeTask(row({
+  'Проект':'Лужники',
+  'Название базовой задачи':'ЦСН - техническая реализация'
+}),0,new Date('2026-10-06T09:00:00'),null);
+assert.equal(projectConflict.projectId, 'csn');
+assert.equal(projectConflict.projectConflict, true);
+assert.equal(projectConflict.projectFromField, 'luzhniki');
+assert.equal(projectConflict.projectFromParent, 'csn');
+
 // Parent/base task is the fallback when the explicit project field is empty.
 const parentProject = normalizeTask(row({
   'Проект':'',
@@ -101,7 +111,8 @@ const internalTask = normalizeTask(row({
   'Название базовой задачи':'Просчеты ИТО'
 }),0,new Date('2026-10-06T09:00:00'),null);
 assert.equal(internalTask.projectId, '');
-assert.equal(internalTask.project, 'Вне активных проектов');
+assert.equal(internalTask.project, 'Операционная работа');
+assert.equal(internalTask.workstream, 'operational');
 
 // Daily location answers office/site/remote/vacation, and site is linked to one active project.
 assert.deepEqual(normalizePresenceEntry({mode:'site',projectId:'csn'}), {mode:'site',projectId:'csn'});
@@ -151,6 +162,13 @@ let completed = snap([row({
   'Крайний срок':'02.10.2026 18:00'
 })], '2026-10-06T14:00:00', s2, [s1,s2]);
 assert.ok(completed.events.some(e=>e.type==='OVERDUE_RESOLVED_BY_COMPLETION'));
+assert.ok(completed.events.some(e=>e.type==='TASK_COMPLETED'));
+assert.equal(summarizeChanges(completed).counts.completed, 1);
+
+// First snapshot control age uses Bitrix activity as an estimated fallback.
+let firstOldControl = snap([row({'Статус':'Ждёт контроля','Дата изменения':'01.10.2026 09:00'})], '2026-10-06T09:00:00');
+assert.equal(firstOldControl.tasks[0].waitingControlDays, 5);
+assert.equal(firstOldControl.tasks[0].controlAgeEstimated, true);
 
 // Waiting control transfers the ball and does not count as the executor's live load.
 let control1 = snap([row({'Статус':'Ждёт контроля','Дата изменения':'01.10.2026 09:00'})], '2026-10-01T09:00:00');
@@ -161,6 +179,18 @@ assert.equal(control3.tasks[0].ballOwner.type, 'author');
 assert.equal(control3.tasks[0].loadRelevant, false);
 let control5 = snap([row({'Статус':'Ждёт контроля','Дата изменения':'01.10.2026 09:00'})], '2026-10-06T09:00:00', control3, [control1,control3]);
 assert.ok(control5.events.some(e=>e.type==='CONTROL_5_DAYS'));
+
+// People facts keep active/control/attention/debt separate without reserve or overload labels.
+const peopleFacts = summarizePeopleV2(control5.tasks, {people:{}}, []);
+const engineerFacts = peopleFacts.find(p => p.name === 'Максим Буржинский') || peopleFacts[0];
+assert.ok(Object.prototype.hasOwnProperty.call(engineerFacts, 'activeCount'));
+assert.ok(Object.prototype.hasOwnProperty.call(engineerFacts, 'waitingControlCount'));
+assert.ok(!Object.prototype.hasOwnProperty.call(engineerFacts, 'status'));
+
+// Operational work is not promoted into a ninth project.
+const operational = summarizeOperationalWork([internalTask]);
+assert.equal(operational.totalCount, 1);
+assert.equal(summarizeProjectsV2([internalTask]).length, 8);
 
 // Deadline churn becomes a dedicated attention signal.
 let d1 = snap([row({'Крайний срок':'10.10.2026 18:00'})], '2026-10-01T09:00:00');
@@ -188,5 +218,5 @@ assert.ok(missingIdQuality.errors.some(x=>x.includes('ID')));
 const q = validateRows([row()], headers, { rawCount: 10 });
 assert.equal(q.requiresConfirmation, true);
 
-console.log('PASS: fixed ITO roster/projects, daily location, events, debt separation, control lifecycle, quality gate');
+console.log('PASS: management overview, fixed roster/projects, operational work, changes, control age, debt separation, quality gate');
 `, Object.assign(context, { __assert: assert }));
