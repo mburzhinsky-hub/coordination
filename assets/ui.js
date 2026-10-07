@@ -20,7 +20,7 @@ function renderOverview(snapshot) {
       ${renderAttentionPanel(attention.slice(0, 4), debtCount)}
     </div>
     <div class="dashboard-grid dashboard-grid-bottom">
-      ${renderProjectsPanel(projects.slice(0, 6))}
+      ${renderProjectsPanel(projects)}
       ${renderPresencePanel(people, projects, presence)}
     </div>`;
 }
@@ -61,13 +61,16 @@ function renderProjectsPanel(projects) {
 }
 
 function renderPresencePanel(people, projects, presence) {
-  const rankedProjects = [...projects].sort((a,b) => presenceProjectWeight(presence, b.name) - presenceProjectWeight(presence, a.name) || b.liveTasks - a.liveTasks).slice(0, 4);
-  const shownPeople = people;
+  const rows = people.map(person => {
+    const entry = presenceForPerson(presence, person.name);
+    const project = entry.mode === 'site' ? itoProjectById(entry.projectId) : null;
+    return { name: person.name, mode: entry.mode, label: presenceModeLabel(entry.mode), project: project?.name || '' };
+  });
+  const order = { site: 0, office: 1, remote: 2, vacation: 3, '': 4 };
+  rows.sort((a,b) => (order[a.mode] ?? 4) - (order[b.mode] ?? 4) || a.name.localeCompare(b.name, 'ru'));
   return `<section class="panel">
-    <div class="panel-head"><h2 class="panel-title">Кто где занят</h2><span class="panel-menu">•••</span></div>
-    ${rankedProjects.length ? `<table class="presence-table"><thead><tr><th></th>${rankedProjects.map(p => `<th title="${escapeAttr(p.name)}">${escapeHtml(shortLabel(p.name, 14))}</th>`).join('')}</tr></thead><tbody>
-      ${shownPeople.map(person => `<tr><td>${escapeHtml(person.name)}</td>${rankedProjects.map(project => `<td class="presence-cell level-${presenceLevel(presence, person.name, project.name)}"></td>`).join('')}</tr>`).join('')}
-    </tbody></table>` : `<div class="attention-empty">Матрица появится после заполнения ежедневного контекста.</div>`}
+    <div class="panel-head"><h2 class="panel-title">Кто где</h2><button class="panel-link" data-edit-presence="1">изменить →</button></div>
+    <div class="where-list">${rows.map(row => `<div class="where-row"><div class="person-cell"><span class="avatar">${escapeHtml(initials(row.name))}</span><span class="person-name">${escapeHtml(row.name)}</span></div><span class="where-status ${escapeAttr(row.mode || 'unknown')}">${escapeHtml(row.label)}</span><span class="where-project">${row.project ? escapeHtml(row.project) : '—'}</span></div>`).join('')}</div>
   </section>`;
 }
 
