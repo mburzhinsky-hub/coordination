@@ -753,3 +753,32 @@ h1 { font-family: var(--display); font-size: clamp(32px, 3vw, 48px); line-height
 @media (max-width: 980px) {
   .overview-signal-grid { grid-template-columns: 1fr; }
 }
+
+
+/* Shared access status */
+.sync-status {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #ececea;
+  color: #777;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.sync-status::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #aaa;
+}
+.sync-status.is-shared { color: #2f6f53; background: #e5f0e9; }
+.sync-status.is-shared::before { background: var(--success); }
+.sync-status.is-flash { background: #111; color: #fff; }
+.sync-status.is-flash::before { background: #fff; }
+@media (max-width: 780px) {
+  .sync-status { display: none; }
+}
