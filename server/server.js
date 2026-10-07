@@ -14,7 +14,7 @@ const MAX_BODY_BYTES = 30 * 1024 * 1024;
 function readConfig() {
   let fileConfig = {};
   try {
-    fileConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+    fileConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^\\uFEFF/, ''));
   } catch (_) {}
   return {
     host: process.env.COORD_HOST || fileConfig.host || '127.0.0.1',
@@ -268,6 +268,7 @@ async function handleStatic(req, res, url) {
   relative = relative.replace(/^\/+/, '');
 
   const allowed = relative === 'index.html' ||
+    relative === 'migration.html' ||
     relative.startsWith('assets/') ||
     relative.startsWith('data/');
 
