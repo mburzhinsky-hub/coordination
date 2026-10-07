@@ -1,45 +1,61 @@
 'use strict';
-async function preparePresenceEditor(snapshot) {
+async function preparePresenceEditor(snapshot, force = false) {
   const existing = await loadPresence(snapshot.id);
-  if (existing) { state.presence = existing; return; }
-  const previous = await loadPreviousPresence(snapshot.asOf);
-  const roster = mergeRoster(snapshot.tasks, state.roster, previous || {people:{}});
-  const projects = summarizeProjectsV2(snapshot.tasks).map(p => p.name);
+  if (existing && !force) { state.presence = existing; return; }
+  const previous = existing || await loadPreviousPresence(snapshot.asOf);
+  const roster = [...ITO_ROSTER];
   const draft = { snapshotId: snapshot.id, asOf: snapshot.asOf, people: {} };
   roster.forEach(person => {
-    draft.people[person] = {};
-    projects.forEach(project => { draft.people[person][project] = Number(previous?.people?.[person]?.[project] || 0); });
+    const prior = normalizePresenceEntry(previous?.people?.[person]);
+    draft.people[person] = { mode: prior.mode || 'office', projectId: prior.projectId || '' };
   });
   state.pendingPresence = draft;
   state.pendingPresenceSnapshotId = snapshot.id;
-  renderPresenceEditor(roster, projects, draft);
+  renderPresenceEditor(roster, draft);
   document.getElementById('presenceDialog')?.showModal();
 }
 
-function renderPresenceEditor(roster, projects, draft) {
-  document.getElementById('presenceMatrix').innerHTML = `<table class="presence-edit-table"><thead><tr><th>Сотрудник</th>${projects.map(p => `<th title="${escapeAttr(p)}">${escapeHtml(shortLabel(p, 18))}</th>`).join('')}</tr></thead><tbody>${roster.map(person => `<tr><td>${escapeHtml(person)}</td>${projects.map(project => { const level = Number(draft.people?.[person]?.[project] || 0); return `<td><button type="button" class="presence-edit-button level-${level}" data-presence-person="${escapeAttr(person)}" data-presence-project="${escapeAttr(project)}">${level || '—'}</button></td>`; }).join('')}</tr>`).join('')}</tbody></table>`;
+function renderPresenceEditor(roster, draft) {
+  const projectOptions = ITO_PROJECTS.map(project => `<option value="${escapeAttr(project.id)}">${escapeHtml(project.name)}</option>`).join('');
+  document.getElementById('presenceMatrix').innerHTML = `<table class="presence-edit-table"><thead><tr><th>Сотрудник</th><th>Где сегодня</th><th>Проект / объект</th></tr></thead><tbody>${roster.map(person => {
+    const entry = normalizePresenceEntry(draft.people?.[person]);
+    return `<tr><td>${escapeHtml(person)}</td><td><select class="presence-mode-select" data-presence-person="${escapeAttr(person)}">${PRESENCE_MODES.map(mode => `<option value="${mode.id}" ${entry.mode === mode.id ? 'selected' : ''}>${escapeHtml(mode.label)}</option>`).join('')}</select></td><td><select class="presence-project-select" data-presence-project-person="${escapeAttr(person)}" ${entry.mode === 'site' ? '' : 'disabled'}><option value="">Выберите проект</option>${projectOptions.replace(`value="${entry.projectId}"`, `value="${entry.projectId}" selected`)}</select></td></tr>`;
+  }).join('')}</tbody></table>`;
 }
 
-function updatePresenceButton(button, level) {
-  button.className = `presence-edit-button level-${level}`;
-  button.textContent = level || '—';
+function updatePresenceRow(person) {
+  const entry = normalizePresenceEntry(state.pendingPresence?.people?.[person]);
+  const select = document.querySelector(`[data-presence-project-person="${CSS.escape(person)}"]`);
+  if (!select) return;
+  select.disabled = entry.mode !== 'site';
+  if (entry.mode !== 'site') {
+    select.value = '';
+    state.pendingPresence.people[person].projectId = '';
+  }
 }
 
 async function savePendingPresence(useChanges) {
   if (!state.pendingPresenceSnapshotId) return;
   const payload = state.pendingPresence || { snapshotId: state.pendingPresenceSnapshotId, asOf: state.currentSnapshot.asOf, people: {} };
+  for (const person of ITO_ROSTER) {
+    payload.people[person] = normalizePresenceEntry(payload.people[person] || { mode: 'office', projectId: '' });
+  }
   await putRecord('presence', payload);
   state.presence = payload;
   state.pendingPresence = null;
   state.pendingPresenceSnapshotId = null;
-  state.roster = mergeRoster(state.currentSnapshot.tasks, state.roster, state.presence);
+  state.roster = [...ITO_ROSTER];
   await saveRoster(state.roster);
   document.getElementById('presenceDialog')?.close();
   renderCurrentView();
 }
 
-function presenceLevel(presence, person, project) { return Math.max(0, Math.min(3, Number(presence?.people?.[person]?.[project] || 0))); }
-function presenceProjectWeight(presence, project) { return sum(Object.entries(presence?.people || {}).filter(([person]) => isItoMember(person)).map(([,row]) => Number(row?.[project] || 0))); }
+function presenceProjectWeight(presence, projectId) {
+  return ITO_ROSTER.filter(person => {
+    const entry = presenceForPerson(presence, person);
+    return entry.mode === 'site' && entry.projectId === projectId;
+  }).length;
+}
 
 async function seedRepositorySnapshots() {
   let manifest;
