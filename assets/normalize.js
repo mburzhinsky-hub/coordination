@@ -84,8 +84,10 @@ function normalizeTask(row, index, asOf, previousTask = null) {
   const parentTitle = get('Название базовой задачи','Базовая задача','Родительская задача');
   const parentId = get('ID базовой задачи','ID родительской задачи');
   const projectRaw = get('Проект','Группа','Рабочая группа');
-  const projectFullName = parentTitle || projectRaw || 'Без проекта';
-  const project = shortenProjectName(projectFullName);
+  const resolvedProject = resolveItoProject(projectRaw, parentTitle);
+  const projectId = resolvedProject?.id || '';
+  const projectFullName = resolvedProject?.fullName || projectRaw || parentTitle || 'Вне активных проектов';
+  const project = resolvedProject?.name || 'Вне активных проектов';
   const deadline = parseBitrixDate(get('Крайний срок','Срок','Дедлайн'));
   const actualStart = parseBitrixDate(get('Дата начала работы','Дата старта','Фактическая дата начала'));
   const plannedStart = parseBitrixDate(get('Планируемая дата начала','Плановая дата начала'));
@@ -145,7 +147,7 @@ function normalizeTask(row, index, asOf, previousTask = null) {
   const loadRelevant = Boolean(!isCompleted && !isDeferred && !isProjectContainer && !isWaitingControl && debt === 'none' && activity !== 'stale');
   return {
     id: String(id || ''), title, status, responsible, author, creator, coExecutors, observers,
-    parentTitle, parentId, projectRaw, projectFullName, project,
+    parentTitle, parentId, projectRaw, projectId, projectFullName, project,
     deadline, actualStart, plannedStart, plannedEnd, created, changed, closed, estimate, spent, planned,
     isCompleted, isWaitingControl, isInProgress, isDeferred, isProjectContainer, isIgnoredDaily, ignoreForDashboard,
     noDeadline, overdue, overdueDays, deadlineDeltaDays, dueToday, dueSoon,
