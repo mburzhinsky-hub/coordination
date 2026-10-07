@@ -130,12 +130,13 @@ function summarizePeopleV2(tasks, presence = {people:{}}, roster = []) {
     const locationProject = manual.mode === 'site' ? itoProjectById(manual.projectId) : null;
     const location = manual.mode === 'site' && locationProject ? `На объекте · ${locationProject.name}` : presenceModeLabel(manual.mode);
     const focus = topTask?.title || '—';
+    const focusTaskId = topTask?.id || '';
     let status = 'normal';
     if (hours >= 32 || live.length >= 7) status = 'overload';
     else if (attentionTasks.length) status = 'risk';
     else if (manual.mode === 'vacation') status = 'normal';
     else if (live.length <= 2) status = 'reserve';
-    return { name, liveCount: live.length, hours, attentionCount: attentionTasks.length, debtCount, projectCount, focus, location, presenceMode: manual.mode, presenceProjectId: manual.projectId, status };
+    return { name, liveCount: live.length, hours, attentionCount: attentionTasks.length, debtCount, projectCount, focus, focusTaskId, location, presenceMode: manual.mode, presenceProjectId: manual.projectId, status };
   });
 }
 
