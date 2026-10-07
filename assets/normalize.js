@@ -48,13 +48,13 @@ function parseBitrixHtmlExport(text) {
   const doc = parser.parseFromString(String(text || ''), 'text/html');
   const table = doc.querySelector('table');
   if (!table) throw new Error('В выгрузке не найдена HTML-таблица. Проверьте экспорт задач Bitrix24.');
-  const matrix = Array.from(table.querySelectorAll('tr')).map(tr => Array.from(tr.querySelectorAll('th,td')).map(td => cleanText(td.textContent))).filter(row => row.some(Boolean));
+  const matrix = Array.from(table.querySelectorAll('tr')).map(tr => Array.from(tr.querySelectorAll('th,td')).map(td => String(td.textContent || '').replace(/\u00a0/g, ' ').trim())).filter(row => row.some(value => cleanText(value)));
   if (matrix.length < 2) throw new Error('В выгрузке нет строк с задачами.');
   const headerIndex = findHeaderRow(matrix);
   const headers = matrix[headerIndex].map(normalizeHeader);
   const rows = matrix.slice(headerIndex + 1).map(row => {
     const obj = {};
-    headers.forEach((header, i) => { obj[header] = cleanText(row[i] || ''); });
+    headers.forEach((header, i) => { obj[header] = header === normalizeHeader('Описание') ? cleanMultilineText(row[i] || '') : cleanText(row[i] || ''); });
     return obj;
   }).filter(row => Object.values(row).some(Boolean));
   return { rows, headers };
@@ -75,7 +75,7 @@ function normalizeTask(row, index, asOf, previousTask = null) {
   const get = (...names) => getRowValue(row, ...names);
   const id = get('ID','ID задачи','Идентификатор');
   const title = get('Название','Задача','Наименование') || `Без названия ${index + 1}`;
-  const description = get('Описание');
+  const description = cleanMultilineText(row[normalizeHeader('Описание')] || '');
   const status = get('Статус');
   const responsible = get('Ответственный','Исполнитель') || 'Не указан';
   const creator = get('Создатель');
