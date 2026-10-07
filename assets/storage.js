@@ -122,7 +122,13 @@ async function loadPreviousPresence(asOf) {
 async function loadRoster() { return [...ITO_ROSTER]; }
 async function saveRoster(roster) { await putRecord('settings',{id:'roster',value:[...ITO_ROSTER]}); }
 
-function openDb() {
+async function openDb() {
+  state.localDb = await openLocalDb();
+  state.sharedMode = await detectSharedServer();
+  return state.localDb;
+}
+
+function openLocalDb() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onerror = () => reject(request.error);
@@ -137,12 +143,161 @@ function openDb() {
   });
 }
 
-function store(name, mode='readonly') { return state.db.transaction(name, mode).objectStore(name); }
-function getRecord(name, key) { return new Promise((resolve,reject) => { const r=store(name).get(key); r.onsuccess=()=>resolve(r.result||null); r.onerror=()=>reject(r.error); }); }
-function getAllRecords(name) { return new Promise((resolve,reject) => { const r=store(name).getAll(); r.onsuccess=()=>resolve(r.result||[]); r.onerror=()=>reject(r.error); }); }
-function putRecord(name, value) { return new Promise((resolve,reject) => { const r=store(name,'readwrite').put(value); r.onsuccess=()=>resolve(r.result); r.onerror=()=>reject(r.error); }); }
-function deleteRecord(name, key) { return new Promise((resolve,reject) => { const r=store(name,'readwrite').delete(key); r.onsuccess=()=>resolve(); r.onerror=()=>reject(r.error); }); }
-async function pruneSources(limit) { const rows=(await getAllRecords('sources')).sort((a,b)=>new Date(b.asOf)-new Date(a.asOf)); for (const row of rows.slice(limit)) await deleteRecord('sources',row.id); }
+async function detectSharedServer() {
+  try {
+    const response = await fetch('/api/health', { cache: 'no-store', credentials: 'same-origin' });
+    if (!response.ok) return false;
+    const info = await response.json();
+    state.sharedRevision = Number(info.revision || 0);
+    return info.shared === true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function localStore(name, mode='readonly') {
+  return state.localDb.transaction(name, mode).objectStore(name);
+}
+function localGetRecord(name, key) {
+  return new Promise((resolve,reject) => {
+    const r=localStore(name).get(key);
+    r.onsuccess=()=>resolve(r.result||null);
+    r.onerror=()=>reject(r.error);
+  });
+}
+function localGetAllRecords(name) {
+  return new Promise((resolve,reject) => {
+    const r=localStore(name).getAll();
+    r.onsuccess=()=>resolve(r.result||[]);
+    r.onerror=()=>reject(r.error);
+  });
+}
+function localPutRecord(name, value) {
+  return new Promise((resolve,reject) => {
+    const r=localStore(name,'readwrite').put(value);
+    r.onsuccess=()=>resolve(r.result);
+    r.onerror=()=>reject(r.error);
+  });
+}
+function localDeleteRecord(name, key) {
+  return new Promise((resolve,reject) => {
+    const r=localStore(name,'readwrite').delete(key);
+    r.onsuccess=()=>resolve();
+    r.onerror=()=>reject(r.error);
+  });
+}
+
+async function sharedRequest(path, options = {}) {
+  const response = await fetch(path, {
+    cache: 'no-store',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    ...options
+  });
+  if (!response.ok) {
+    const message = await response.text().catch(() => '');
+    throw new Error(message || `Shared server error ${response.status}`);
+  }
+  const revision = response.headers.get('x-coordination-revision');
+  if (revision) state.sharedRevision = Number(revision);
+  if (response.status === 204) return null;
+  return await response.json();
+}
+
+async function getRecord(name, key) {
+  if (!state.sharedMode) return localGetRecord(name, key);
+  return await sharedRequest(`/api/store/${encodeURIComponent(name)}/${encodeURIComponent(key)}`);
+}
+async function getAllRecords(name) {
+  if (!state.sharedMode) return localGetAllRecords(name);
+  return await sharedRequest(`/api/store/${encodeURIComponent(name)}`);
+}
+async function putRecord(name, value) {
+  if (!state.sharedMode) return localPutRecord(name, value);
+  const key = recordKey(name, value);
+  await sharedRequest(`/api/store/${encodeURIComponent(name)}/${encodeURIComponent(key)}`, {
+    method: 'PUT',
+    body: JSON.stringify(value)
+  });
+  return key;
+}
+async function deleteRecord(name, key) {
+  if (!state.sharedMode) return localDeleteRecord(name, key);
+  await sharedRequest(`/api/store/${encodeURIComponent(name)}/${encodeURIComponent(key)}`, { method: 'DELETE' });
+}
+
+function recordKey(name, value) {
+  if (name === 'presence') return value.snapshotId;
+  return value.id;
+}
+
+async function pruneSources(limit) {
+  const rows=(await getAllRecords('sources')).sort((a,b)=>new Date(b.asOf)-new Date(a.asOf));
+  for (const row of rows.slice(limit)) await deleteRecord('sources',row.id);
+}
+
+async function migrateIndexedDbToSharedIfEmpty() {
+  if (!state.sharedMode) return;
+  const sharedSnapshots = await getAllRecords('snapshots');
+  if (sharedSnapshots.length) return;
+  const localSnapshots = await localGetAllRecords('snapshots');
+  if (!localSnapshots.length) return;
+
+  for (const storeName of ['snapshots','presence','settings','sources']) {
+    const rows = await localGetAllRecords(storeName);
+    for (const row of rows) await putRecord(storeName, row);
+  }
+}
+
+function startSharedSync() {
+  if (!state.sharedMode || state.syncTimer) return;
+  state.syncTimer = window.setInterval(syncSharedState, 5000);
+}
+
+async function syncSharedState() {
+  if (!state.sharedMode || state.syncing || state.busy || state.pendingPresence) return;
+  state.syncing = true;
+  try {
+    const response = await fetch('/api/revision', { cache: 'no-store', credentials: 'same-origin' });
+    if (!response.ok) return;
+    const info = await response.json();
+    const revision = Number(info.revision || 0);
+    if (revision === state.sharedRevision) return;
+    state.sharedRevision = revision;
+    await refreshSnapshots();
+    if (!state.snapshots.length) return;
+    const latest = state.snapshots[state.snapshots.length - 1];
+    const snapshotChanged = !state.currentSnapshot || latest.id !== state.currentSnapshot.id;
+    state.currentSnapshot = latest;
+    state.presence = await loadPresence(latest.id) || { people: {} };
+    state.roster = await loadRoster();
+    renderCurrentView();
+    if (snapshotChanged) showSyncFlash('Получен новый общий срез');
+  } catch (error) {
+    console.warn('Shared sync failed', error);
+  } finally {
+    state.syncing = false;
+  }
+}
+
+function renderSyncStatus() {
+  const el = document.getElementById('syncStatus');
+  if (!el) return;
+  el.textContent = state.sharedMode ? 'Общий сервер' : 'Локально';
+  el.classList.toggle('is-shared', state.sharedMode);
+}
+
+function showSyncFlash(message) {
+  const el = document.getElementById('syncStatus');
+  if (!el) return;
+  const original = el.textContent;
+  el.textContent = message;
+  el.classList.add('is-flash');
+  window.setTimeout(() => {
+    el.textContent = state.sharedMode ? 'Общий сервер' : original;
+    el.classList.remove('is-flash');
+  }, 2200);
+}
 
 function dehydrateSnapshot(snapshot) {
   return JSON.parse(JSON.stringify(snapshot));
