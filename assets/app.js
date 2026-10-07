@@ -82,7 +82,12 @@ const state = {
   roster: [],
   pendingPresence: null,
   pendingPresenceSnapshotId: null,
-  busy: false
+  busy: false,
+  localDb: null,
+  sharedMode: false,
+  sharedRevision: 0,
+  syncTimer: null,
+  syncing: false
 };
 
 if (typeof window !== 'undefined' && window.addEventListener) {
@@ -94,6 +99,7 @@ async function init() {
   renderLoading('Загружаю историю…');
   try {
     state.db = await openDb();
+    if (state.sharedMode) await migrateIndexedDbToSharedIfEmpty();
     await migrateLegacyExports();
     await seedRepositorySnapshots();
     await refreshSnapshots();
@@ -105,6 +111,7 @@ async function init() {
     state.roster = await loadRoster();
     state.presence = await loadPresence(state.currentSnapshot.id) || { people: {} };
     renderCurrentView();
+    startSharedSync();
   } catch (error) {
     console.error(error);
     renderError(error.message || String(error));
@@ -198,6 +205,7 @@ function renderCurrentView() {
   document.getElementById('pageTitle').textContent = title;
   document.getElementById('pageSubtitle').textContent = subtitle;
   document.getElementById('updatedAt').textContent = `Обновлено ${formatTime(snapshot.asOf)}`;
+  renderSyncStatus();
   const attention = buildAttentionItems(snapshot);
   const navBadge = document.getElementById('navAttentionCount');
   navBadge.hidden = !attention.length;
