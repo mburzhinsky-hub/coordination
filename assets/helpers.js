@@ -17,6 +17,29 @@ function resolveItoProject(...values) {
   return null;
 }
 
+function resolveProjectAssignment(projectRaw, parentTitle, title) {
+  const fromField = resolveItoProject(projectRaw);
+  const fromParent = resolveItoProject(parentTitle);
+  const fromTitle = resolveItoProject(title);
+  const ids = unique([fromField?.id, fromParent?.id, fromTitle?.id]);
+  return {
+    project: fromParent || fromField || fromTitle || null,
+    projectFromField: fromField?.id || '',
+    projectFromParent: fromParent?.id || '',
+    projectFromTitle: fromTitle?.id || '',
+    projectConflict: ids.length > 1
+  };
+}
+
+function classifyOperationalBucket(title, parentTitle, projectRaw) {
+  const text = normalizeHeader([title, parentTitle, projectRaw].filter(Boolean).join(' '));
+  if (/закуп|договор|счет|счёт|оплат|поставк|коммерческ/.test(text)) return 'Закупки / договоры';
+  if (/обуч|курс|аттест|сертифик|экзамен/.test(text)) return 'Обучение';
+  if (/пресейл|просчет|просчёт|расчет|расчёт|тендер|коммерческ.*предлож/.test(text)) return 'Пресейл';
+  if (/ито|офис|внутрен|руководител/.test(text)) return 'Внутренние задачи ИТО';
+  return 'Прочее';
+}
+
 function itoProjectById(id) {
   return ITO_PROJECTS.find(project => project.id === id) || null;
 }
