@@ -155,6 +155,16 @@ function bindUi() {
       openTaskDetail(taskLink.dataset.taskId);
       return;
     }
+    const projectRow = event.target.closest('[data-project-id]');
+    if (projectRow) {
+      renderProjectDetail(projectRow.dataset.projectId);
+      return;
+    }
+    const personRow = event.target.closest('[data-person]');
+    if (personRow) {
+      renderPersonDetail(personRow.dataset.person);
+      return;
+    }
     const editPresence = event.target.closest('[data-edit-presence]');
     if (editPresence && state.currentSnapshot) {
       await preparePresenceEditor(state.currentSnapshot, true);
