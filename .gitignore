@@ -1,2 +1,4 @@
 .DS_Store
 Thumbs.db
+shared-data/
+server/config.local.json
