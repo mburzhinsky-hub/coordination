@@ -7,12 +7,18 @@ function renderOverview(snapshot) {
   const operational = summarizeOperationalWork(snapshot.tasks);
   const quality = summarizeDataQuality(snapshot, presence);
   const changes = summarizeChanges(snapshot);
+  const possibleOverload = summarizePossibleOverload(snapshot.tasks, people);
+  const overloadMap = new Map(possibleOverload.map(item => [item.name, item]));
+  people.forEach(person => { person.possibleOverload = overloadMap.get(person.name) || null; });
   const debtCount = snapshot.tasks.filter(t => t.debt && t.debt !== 'none').length;
   const waitingControlCount = snapshot.tasks.filter(t => !t.isCompleted && t.isWaitingControl).length;
   const firstSnapshot = state.snapshots.length < 2;
   document.getElementById('viewRoot').innerHTML = `
     ${renderTodayStrip(attention.length, waitingControlCount, debtCount, changes.counts.completed, firstSnapshot)}
-    ${renderChangesPanel(changes, firstSnapshot)}
+    <div class="dashboard-grid management-grid overview-signal-grid">
+      ${renderChangesPanel(changes, firstSnapshot)}
+      ${renderPossibleOverloadPanel(possibleOverload)}
+    </div>
     <div class="dashboard-grid management-grid">
       ${renderAttentionPanel(attention.slice(0, 5), debtCount)}
       ${renderPresenceSummary(people, presence)}
@@ -48,6 +54,14 @@ function renderChangesPanel(changes, firstSnapshot) {
 }
 
 
+function renderPossibleOverloadPanel(items) {
+  return `<section class="panel overload-panel">
+    <div class="panel-head"><div><h2 class="panel-title">Возможный перегруз</h2><p class="panel-note">Эвристика: активные задачи, параллельные проекты, свежие сигналы и близкие сроки.</p></div><strong class="overload-count">${items.length}</strong></div>
+    ${items.length ? `<div class="overload-list">${items.slice(0,4).map(item => `<button class="overload-row" type="button" data-person="${escapeAttr(item.name)}"><span class="avatar">${escapeHtml(initials(item.name))}</span><span class="overload-main"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.reasons.join(' · '))}</small></span><span class="overload-tag ${item.level}">проверить</span></button>`).join('')}</div>` : '<div class="attention-empty">Явных признаков перегруза сейчас нет.</div>'}
+  </section>`;
+}
+
+
 function kpiCard(value, label, icon, kind) {
   return `<article class="kpi-card" data-kind="${escapeAttr(kind)}"><div><div class="kpi-value">${escapeHtml(value)}</div><div class="kpi-label">${escapeHtml(label)}</div></div><div class="kpi-icon">${escapeHtml(icon)}</div></article>`;
 }
@@ -55,12 +69,12 @@ function kpiCard(value, label, icon, kind) {
 function renderTeamPanel(people) {
   return `<section class="panel management-panel">
     <div class="panel-head"><h2 class="panel-title">Команда</h2><button class="panel-link" data-open-view="people">все →</button></div>
-    <div class="table-scroll"><table class="data-table team-table management-table"><thead><tr><th>Сотрудник</th><th>Где</th><th>Текущий фокус</th><th>Активно</th><th>Контроль</th><th>Сигналы</th><th>Долг</th></tr></thead><tbody>
+    <div class="table-scroll"><table class="data-table team-table management-table"><thead><tr><th>Сотрудник</th><th>Где</th><th>Текущий фокус</th><th>Активно</th><th>Контроль</th><th>Сигналы</th><th>Долг</th><th>Нагрузка</th></tr></thead><tbody>
       ${people.map(person => `<tr class="clickable-row" data-person="${escapeAttr(person.name)}">
         <td><div class="person-cell"><span class="avatar">${escapeHtml(initials(person.name))}</span><span class="person-name">${escapeHtml(person.name)}</span></div></td>
         <td>${escapeHtml(person.location)}</td>
         <td>${person.focusTaskId ? `<button class="task-link task-link-compact" type="button" data-task-id="${escapeAttr(person.focusTaskId)}" title="${escapeAttr(person.focus)}">${escapeHtml(person.focus)}</button>` : '—'}</td>
-        <td>${person.activeCount}</td><td>${person.waitingControlCount}</td><td>${person.freshAttentionCount}</td><td>${person.debtCount}</td>
+        <td>${person.activeCount}</td><td>${person.waitingControlCount}</td><td>${person.freshAttentionCount}</td><td>${person.debtCount}</td><td>${person.possibleOverload ? `<span class="overload-inline ${person.possibleOverload.level}">проверить</span>` : '—'}</td>
       </tr>`).join('')}
     </tbody></table></div>
   </section>`;
