@@ -688,3 +688,65 @@ h1 { font-family: var(--display); font-size: clamp(32px, 3vw, 48px); line-height
   .change-project { grid-column: 2; }
   .change-text { grid-column: 2; white-space: normal; }
 }
+
+
+/* Possible overload: advisory signal, not a definitive capacity score */
+.overview-signal-grid { grid-template-columns: minmax(0,1.45fr) minmax(320px,.55fr); }
+.overload-panel .panel-head { align-items: flex-start; }
+.panel-note {
+  margin: 5px 0 0;
+  max-width: 360px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.overload-count {
+  font-family: var(--display);
+  font-size: 30px;
+  line-height: 1;
+}
+.overload-list { display: grid; }
+.overload-row {
+  width: 100%;
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: 28px minmax(0,1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.overload-row:first-child { border-top: 0; }
+.overload-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.overload-main strong { font-size: 11px; }
+.overload-main small {
+  color: var(--text-secondary);
+  font-size: 9px;
+  line-height: 1.3;
+  white-space: normal;
+}
+.overload-tag,
+.overload-inline {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #ececea;
+  color: #666;
+  font-size: 9px;
+  white-space: nowrap;
+}
+.overload-tag.watch,
+.overload-inline.watch { background: #eee9dc; color: #745d1c; }
+.overload-tag.high,
+.overload-inline.high { background: #f2dedb; color: #9b3a31; }
+@media (max-width: 980px) {
+  .overview-signal-grid { grid-template-columns: 1fr; }
+}
