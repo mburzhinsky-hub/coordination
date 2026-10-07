@@ -100,11 +100,18 @@ function renderProjectsPanel(projects, snapshot = state.currentSnapshot) {
 function renderPresenceSummary(people, presence) {
   const groups = { site: [], office: [], remote: [], vacation: [], '': [] };
   people.forEach(person => (groups[person.presenceMode] || groups['']).push(person));
+  const specifiedCount = people.length - groups[''].length;
   return `<section class="panel">
-    <div class="panel-head"><h2 class="panel-title">Кто где</h2><button class="panel-link" data-edit-presence="1">изменить →</button></div>
+    <div class="panel-head"><div><h2 class="panel-title">Кто где</h2><p class="panel-note">Отмечено ${specifiedCount} из ${people.length}</p></div><button class="panel-link" data-edit-presence="1">изменить →</button></div>
     <div class="location-summary">
       ${groups.site.map(p => `<div class="location-site"><strong>${escapeHtml(p.name)}</strong><span>${escapeHtml(p.location)}</span></div>`).join('')}
-      <div class="location-counts"><span>В офисе <strong>${groups.office.length}</strong></span><span>Удалённо <strong>${groups.remote.length}</strong></span><span>В отпуске <strong>${groups.vacation.length}</strong></span><span>Не указано <strong>${groups[''].length}</strong></span></div>
+      <div class="location-counts">
+        <span class="location-count-site">На объектах <strong>${groups.site.length}</strong></span>
+        <span>В офисе <strong>${groups.office.length}</strong></span>
+        <span>Удалённо <strong>${groups.remote.length}</strong></span>
+        <span>В отпуске <strong>${groups.vacation.length}</strong></span>
+        <span>Не указано <strong>${groups[''].length}</strong></span>
+      </div>
     </div>
   </section>`;
 }
