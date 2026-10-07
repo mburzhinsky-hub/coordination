@@ -1,45 +1,68 @@
 'use strict';
 function renderOverview(snapshot) {
   const presence = state.presence || { people: {} };
-  const roster = mergeRoster(snapshot.tasks, state.roster, presence);
-  const people = summarizePeopleV2(snapshot.tasks, presence, roster);
-  const projects = summarizeProjectsV2(snapshot.tasks);
+  const people = summarizePeopleV2(snapshot.tasks, presence, ITO_ROSTER);
+  const projects = summarizeProjectsV2(snapshot.tasks, snapshot);
   const attention = buildAttentionItems(snapshot);
+  const operational = summarizeOperationalWork(snapshot.tasks);
+  const quality = summarizeDataQuality(snapshot, presence);
+  const changes = summarizeChanges(snapshot);
   const debtCount = snapshot.tasks.filter(t => t.debt && t.debt !== 'none').length;
-  const reserveCount = people.filter(p => p.status === 'reserve').length;
-  const root = document.getElementById('viewRoot');
-  root.innerHTML = `
-    <div class="kpi-grid">
-      ${kpiCard(people.length, 'сотрудников', '♙', 'people')}
-      ${kpiCard(projects.length, 'проектов', '□', 'projects')}
-      ${kpiCard(attention.length, 'требуют внимания', '!', 'attention')}
-      ${kpiCard(reserveCount, 'есть резерв', '▥', 'reserve')}
+  const waitingControlCount = snapshot.tasks.filter(t => !t.isCompleted && t.isWaitingControl).length;
+  const firstSnapshot = state.snapshots.length < 2;
+  document.getElementById('viewRoot').innerHTML = `
+    ${renderTodayStrip(attention.length, waitingControlCount, debtCount, changes.counts.completed, firstSnapshot)}
+    ${renderChangesPanel(changes, firstSnapshot)}
+    <div class="dashboard-grid management-grid">
+      ${renderAttentionPanel(attention.slice(0, 5), debtCount)}
+      ${renderPresenceSummary(people, presence)}
     </div>
-    <div class="dashboard-grid">
-      ${renderTeamPanel(people)}
-      ${renderAttentionPanel(attention.slice(0, 4), debtCount)}
-    </div>
-    <div class="dashboard-grid dashboard-grid-bottom">
-      ${renderProjectsPanel(projects)}
-      ${renderPresencePanel(people, projects, presence)}
+    ${renderProjectsPanel(projects, snapshot)}
+    ${renderTeamPanel(people)}
+    <div class="dashboard-grid management-grid">
+      ${renderOperationalPanel(operational)}
+      ${renderQualityPanel(quality)}
     </div>`;
 }
+
+function renderTodayStrip(attention, control, debt, completed, firstSnapshot) {
+  return `<section class="today-strip">
+    <div class="today-label">Сегодня</div>
+    <div class="today-metric"><strong>${attention}</strong><span>свежих сигналов</span></div>
+    <div class="today-metric"><strong>${control}</strong><span>ждут контроля</span></div>
+    <div class="today-metric"><strong>${debt}</strong><span>старый долг</span></div>
+    <div class="today-metric"><strong>${firstSnapshot ? '—' : completed}</strong><span>${firstSnapshot ? 'первый срез' : 'закрыто со вчера'}</span></div>
+  </section>`;
+}
+
+function renderChangesPanel(changes, firstSnapshot) {
+  if (firstSnapshot) return `<section class="panel change-panel"><div class="panel-head"><h2 class="panel-title">Что изменилось</h2></div><div class="attention-empty">Это первый срез. Изменения появятся после следующей ежедневной выгрузки.</div></section>`;
+  const c = changes.counts;
+  return `<section class="panel change-panel">
+    <div class="panel-head"><h2 class="panel-title">Что изменилось</h2></div>
+    <div class="change-summary">
+      <span><strong>${c.completed}</strong> закрыто</span><span><strong>${c.added}</strong> новых</span><span><strong>${c.newOverdue}</strong> новых просрочек</span><span><strong>${c.deadlineMoved}</strong> изменений срока</span><span><strong>${c.control}</strong> ушли на контроль</span>
+    </div>
+    <div class="change-list">${changes.meaningful.map(event => `<button class="change-row" type="button" data-task-id="${escapeAttr(event.taskId)}"><span class="signal-dot ${event.severity === 'critical' ? 'critical' : event.severity === 'watch' ? 'watch' : 'none'}"></span><span class="change-project">${escapeHtml(event.project || 'Операционная работа')}</span><span class="change-text">${escapeHtml(event.label)}</span></button>`).join('') || '<div class="attention-empty">Значимых изменений нет.</div>'}</div>
+  </section>`;
+}
+
 
 function kpiCard(value, label, icon, kind) {
   return `<article class="kpi-card" data-kind="${escapeAttr(kind)}"><div><div class="kpi-value">${escapeHtml(value)}</div><div class="kpi-label">${escapeHtml(label)}</div></div><div class="kpi-icon">${escapeHtml(icon)}</div></article>`;
 }
 
 function renderTeamPanel(people) {
-  return `<section class="panel">
+  return `<section class="panel management-panel">
     <div class="panel-head"><h2 class="panel-title">Команда</h2><button class="panel-link" data-open-view="people">все →</button></div>
-    <table class="data-table team-table"><thead><tr><th style="width:27%">Сотрудник</th><th style="width:30%">Сейчас в работе</th><th style="width:11%">Проекты</th><th style="width:10%">Задач</th><th style="width:22%">Статус</th></tr></thead><tbody>
-      ${people.map(person => `<tr>
+    <div class="table-scroll"><table class="data-table team-table management-table"><thead><tr><th>Сотрудник</th><th>Где</th><th>Текущий фокус</th><th>Активно</th><th>Контроль</th><th>Сигналы</th><th>Долг</th></tr></thead><tbody>
+      ${people.map(person => `<tr class="clickable-row" data-person="${escapeAttr(person.name)}">
         <td><div class="person-cell"><span class="avatar">${escapeHtml(initials(person.name))}</span><span class="person-name">${escapeHtml(person.name)}</span></div></td>
-        <td>${person.focusTaskId ? `<button class="task-link task-link-compact" type="button" data-task-id="${escapeAttr(person.focusTaskId)}" title="${escapeAttr(person.focus)}">${escapeHtml(person.focus || '—')}</button>` : escapeHtml(person.focus || '—')}</td>
-        <td>${person.projectCount}</td><td>${person.liveCount}</td>
-        <td>${statusPill(person.status)}</td>
-      </tr>`).join('') || `<tr><td colspan="5">Нет сотрудников в текущем срезе.</td></tr>`}
-    </tbody></table>
+        <td>${escapeHtml(person.location)}</td>
+        <td>${person.focusTaskId ? `<button class="task-link task-link-compact" type="button" data-task-id="${escapeAttr(person.focusTaskId)}" title="${escapeAttr(person.focus)}">${escapeHtml(person.focus)}</button>` : '—'}</td>
+        <td>${person.activeCount}</td><td>${person.waitingControlCount}</td><td>${person.freshAttentionCount}</td><td>${person.debtCount}</td>
+      </tr>`).join('')}
+    </tbody></table></div>
   </section>`;
 }
 
@@ -51,12 +74,37 @@ function renderAttentionPanel(items, debtCount) {
   </section>`;
 }
 
-function renderProjectsPanel(projects) {
-  return `<section class="panel">
+function renderProjectsPanel(projects, snapshot = state.currentSnapshot) {
+  return `<section class="panel management-panel">
     <div class="panel-head"><h2 class="panel-title">Проекты</h2><button class="panel-link" data-open-view="projects">все →</button></div>
-    <table class="data-table"><thead><tr><th style="width:27%">Проект</th><th style="width:29%">Ответственный</th><th style="width:28%">Этап</th><th style="width:16%">Риск</th></tr></thead><tbody>
-      ${projects.map(p => `<tr><td><strong>${escapeHtml(p.name)}</strong></td><td>${escapeHtml(p.responsible || '—')}</td><td>${escapeHtml(p.stage)}</td><td>${projectRisk(p.risk)}</td></tr>`).join('') || `<tr><td colspan="4">Нет активных проектов.</td></tr>`}
-    </tbody></table>
+    <div class="table-scroll"><table class="data-table management-table"><thead><tr><th>Проект</th><th>Активно</th><th>Контроль</th><th>Сигналы</th><th>Долг</th><th>Ближайший срок</th><th>Последнее движение</th></tr></thead><tbody>
+      ${projects.map(p => `<tr class="clickable-row" data-project-id="${escapeAttr(p.id)}"><td><strong>${escapeHtml(p.name)}</strong><div class="secondary">${escapeHtml(p.type)}</div></td><td>${p.activeCount}</td><td>${p.waitingControlCount}</td><td>${p.attentionCount ? projectRisk(p.risk) : '0'}</td><td>${p.debtCount}</td><td>${escapeHtml(p.nextDeadline ? formatDateShort(p.nextDeadline) : '—')}</td><td>${escapeHtml(relativeMovement(p.lastMovementAt, snapshot.asOf))}</td></tr>`).join('')}
+    </tbody></table></div>
+  </section>`;
+}
+
+function renderPresenceSummary(people, presence) {
+  const groups = { site: [], office: [], remote: [], vacation: [], '': [] };
+  people.forEach(person => (groups[person.presenceMode] || groups['']).push(person));
+  return `<section class="panel">
+    <div class="panel-head"><h2 class="panel-title">Кто где</h2><button class="panel-link" data-edit-presence="1">изменить →</button></div>
+    <div class="location-summary">
+      ${groups.site.map(p => `<div class="location-site"><strong>${escapeHtml(p.name)}</strong><span>${escapeHtml(p.location)}</span></div>`).join('')}
+      <div class="location-counts"><span>В офисе <strong>${groups.office.length}</strong></span><span>Удалённо <strong>${groups.remote.length}</strong></span><span>В отпуске <strong>${groups.vacation.length}</strong></span><span>Не указано <strong>${groups[''].length}</strong></span></div>
+    </div>
+  </section>`;
+}
+
+function renderOperationalPanel(data) {
+  return `<section class="panel"><div class="panel-head"><h2 class="panel-title">Операционная работа</h2></div>
+    <div class="operational-stats"><span><strong>${data.totalCount}</strong> текущих</span><span><strong>${data.activeCount}</strong> активно</span><span><strong>${data.waitingControlCount}</strong> контроль</span><span><strong>${data.attentionCount}</strong> сигналы</span><span><strong>${data.debtCount}</strong> долг</span></div>
+    <div class="operational-buckets">${data.buckets.map(x=>`<span>${escapeHtml(x.name)} · ${x.count}</span>`).join('')}</div>
+  </section>`;
+}
+
+function renderQualityPanel(data) {
+  return `<section class="panel"><div class="panel-head"><h2 class="panel-title">Качество данных</h2></div>
+    <div class="quality-list"><div><strong>${data.noDeadlineCount}</strong><span>задач без срока</span></div><div><strong>${data.outsideProjectsCount}</strong><span>вне основных проектов</span></div><div><strong>${data.projectConflictCount}</strong><span>конфликтов проекта</span></div><div><strong>${data.missingPresenceCount}</strong><span>не заполнено «Кто где»</span></div></div>
   </section>`;
 }
 
@@ -86,24 +134,19 @@ function projectRisk(risk) {
 }
 
 function renderPeopleView(snapshot) {
-  const people = summarizePeopleV2(snapshot.tasks, state.presence, mergeRoster(snapshot.tasks, state.roster, state.presence));
-  const overloaded = people.filter(p => p.status === 'overload').length;
-  const risk = people.filter(p => p.status === 'risk').length;
-  const reserve = people.filter(p => p.status === 'reserve').length;
+  const people = summarizePeopleV2(snapshot.tasks, state.presence, ITO_ROSTER);
   document.getElementById('viewRoot').innerHTML = `<section class="view-card">
-    <div class="view-head"><div><h2>Люди</h2><p>Старый долг не считается текущей нагрузкой.</p></div><div class="summary-strip"><span class="summary-chip">перегруз ${overloaded}</span><span class="summary-chip">риск ${risk}</span><span class="summary-chip">резерв ${reserve}</span></div></div>
-    <table class="data-table detail-table"><thead><tr><th>Сотрудник</th><th>Сейчас в работе</th><th>Проекты</th><th>Живых задач</th><th>Часы</th><th>Свежие сигналы</th><th>Старый долг</th><th>Статус</th></tr></thead><tbody>
-      ${people.map(p => `<tr><td><div class="person-cell"><span class="avatar">${escapeHtml(initials(p.name))}</span><span>${escapeHtml(p.name)}</span></div></td><td>${p.focusTaskId ? `<button class="task-link task-link-table" type="button" data-task-id="${escapeAttr(p.focusTaskId)}" title="${escapeAttr(p.focus)}">${escapeHtml(p.focus || '—')}</button>` : escapeHtml(p.focus || '—')}</td><td>${p.projectCount}</td><td>${p.liveCount}</td><td>${p.hours ? escapeHtml(formatHours(p.hours)) : '—'}</td><td>${p.attentionCount}</td><td>${p.debtCount}</td><td>${statusPill(p.status)}</td></tr>`).join('')}
-    </tbody></table></section>`;
+    <div class="view-head"><div><h2>Люди</h2><p>Фактические состояния без синтетической оценки «перегруз / резерв».</p></div></div>
+    ${renderTeamPanel(people)}
+  </section>`;
 }
 
 function renderProjectsView(snapshot) {
-  const projects = summarizeProjectsV2(snapshot.tasks);
+  const projects = summarizeProjectsV2(snapshot.tasks, snapshot);
   document.getElementById('viewRoot').innerHTML = `<section class="view-card">
-    <div class="view-head"><div><h2>Проекты</h2><p>Project identity берётся из родительской / базовой задачи Bitrix.</p></div><div class="summary-strip"><span class="summary-chip">активных ${projects.length}</span><span class="summary-chip">с вниманием ${projects.filter(p => p.attentionCount).length}</span></div></div>
-    <table class="data-table detail-table"><thead><tr><th>Проект</th><th>Ответственный</th><th>Этап</th><th>Живых задач</th><th>Людей</th><th>Ближайший срок</th><th>Свежие сигналы</th><th>Старый долг</th><th>Риск</th></tr></thead><tbody>
-      ${projects.map(p => `<tr><td><strong>${escapeHtml(p.name)}</strong><div class="secondary">${escapeHtml(p.fullName)}</div></td><td>${escapeHtml(p.responsible || '—')}</td><td>${escapeHtml(p.stage)}</td><td>${p.liveTasks}</td><td>${p.peopleCount}</td><td>${escapeHtml(p.nextDeadline ? formatDateShort(p.nextDeadline) : '—')}</td><td>${p.attentionCount}</td><td>${p.debtCount}</td><td>${projectRisk(p.risk)}</td></tr>`).join('')}
-    </tbody></table></section>`;
+    <div class="view-head"><div><h2>Проекты</h2><p>Восемь основных проектов: движение, контроль, свежие сигналы и долг.</p></div></div>
+    ${renderProjectsPanel(projects, snapshot)}
+  </section>`;
 }
 
 function renderAttentionView(snapshot) {
@@ -138,6 +181,45 @@ function renderError(message) { document.getElementById('viewRoot').innerHTML = 
 
 
 
+function renderProjectDetail(projectId) {
+  const def = itoProjectById(projectId);
+  const snapshot = state.currentSnapshot;
+  if (!def || !snapshot) return;
+  const rows = snapshot.tasks.filter(t => t.projectId === projectId && !t.isCompleted);
+  const active = rows.filter(t => t.loadRelevant);
+  const control = rows.filter(t => t.isWaitingControl);
+  const attention = rows.filter(t => t.attention === 'critical' || t.attention === 'watch');
+  const debt = rows.filter(t => t.debt !== 'none');
+  document.getElementById('viewRoot').innerHTML = `<section class="view-card"><div class="view-head"><div><button class="panel-link" data-open-view="projects">← проекты</button><h2>${escapeHtml(def.name)}</h2><p>${escapeHtml(def.type)}</p></div><div class="summary-strip"><span class="summary-chip">активно ${active.length}</span><span class="summary-chip">контроль ${control.length}</span><span class="summary-chip">сигналы ${attention.length}</span><span class="summary-chip">долг ${debt.length}</span></div></div>
+    ${renderTaskGroup('Требует внимания', attention)}
+    ${renderTaskGroup('Активные задачи', active)}
+    ${renderTaskGroup('Ждёт контроля', control)}
+    ${renderTaskGroup('Старый долг', debt)}
+  </section>`;
+}
+
+function renderPersonDetail(personName) {
+  const snapshot = state.currentSnapshot;
+  if (!snapshot) return;
+  const person = summarizePeopleV2(snapshot.tasks, state.presence, ITO_ROSTER).find(p => p.name === personName);
+  if (!person) return;
+  const owned = snapshot.tasks.filter(t => canonicalItoName(t.responsible) === personName && !t.isCompleted);
+  const active = owned.filter(t => t.loadRelevant);
+  const control = owned.filter(t => t.isWaitingControl);
+  const attention = snapshot.tasks.filter(t => (t.attention === 'critical' || t.attention === 'watch') && (t.ballOwner?.people || []).some(p => canonicalItoName(p) === personName));
+  const debt = owned.filter(t => t.debt !== 'none');
+  document.getElementById('viewRoot').innerHTML = `<section class="view-card"><div class="view-head"><div><button class="panel-link" data-open-view="people">← люди</button><h2>${escapeHtml(personName)}</h2><p>${escapeHtml(person.location)}</p></div><div class="summary-strip"><span class="summary-chip">активно ${active.length}</span><span class="summary-chip">контроль ${control.length}</span><span class="summary-chip">сигналы ${attention.length}</span><span class="summary-chip">долг ${debt.length}</span></div></div>
+    ${renderTaskGroup('Активно сейчас', active)}
+    ${renderTaskGroup('Ждёт контроля', control)}
+    ${renderTaskGroup('Свежие сигналы', attention)}
+    ${renderTaskGroup('Старый долг', debt)}
+  </section>`;
+}
+
+function renderTaskGroup(title, rows) {
+  return `<section class="detail-group"><h3>${escapeHtml(title)}</h3>${rows.length ? rows.map(t=>`<button class="detail-task-row" type="button" data-task-id="${escapeAttr(t.id)}"><span>${escapeHtml(t.title)}</span><small>${escapeHtml(t.project)} · ${escapeHtml(t.responsible)}${t.deadline ? ' · '+formatDateShort(t.deadline) : ''}</small></button>`).join('') : '<div class="attention-empty">Нет задач.</div>'}</section>`;
+}
+
 function openTaskDetail(taskId) {
   const task = state.currentSnapshot?.tasks?.find(item => String(item.id) === String(taskId));
   if (!task) return;
@@ -150,7 +232,12 @@ function openTaskDetail(taskId) {
     task.responsible ? `Ответственный · ${task.responsible}` : '',
     task.status ? `Статус · ${task.status}` : '',
     task.deadline ? `Срок · ${formatDateTime(task.deadline)}` : 'Без срока',
-    task.id ? `ID · ${task.id}` : ''
+    task.id ? `ID · ${task.id}` : '',
+    task.changed ? `Изменена · ${formatDateTime(task.changed)}` : '',
+    task.inactivityDays ? `Без движения · ${task.inactivityDays} дн.` : '',
+    task.attention !== 'none' ? `Attention · ${task.attentionReason || task.attention}` : '',
+    task.debt !== 'none' ? `Debt · ${task.debt}` : '',
+    task.ballOwner?.people?.length ? `Мяч · ${task.ballOwner.people.join(', ')}` : ''
   ].filter(Boolean);
   document.getElementById('taskDetailMeta').innerHTML =
     meta.map(value => `<span>${escapeHtml(value)}</span>`).join('');
