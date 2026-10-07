@@ -59,6 +59,8 @@ assert.equal(projectKey('ЦСН — техническая реализация'
 // Real 07 October export aliases resolve into the fixed active projects.
 assert.equal(resolveItoProject('ЦУМ. Профцентр в Казани')?.id, 'kazan');
 assert.equal(resolveItoProject('Грозный. Музей космонавтики(308)')?.id, 'grozny');
+assert.equal(resolveItoProject('Кресты музей спб техническая реализация')?.id, 'kresty');
+assert.equal(resolveItoProject('Кресты Музей СПБ - техническая реализация')?.id, 'kresty');
 assert.equal(resolveItoProject('P211-24-09 Музей ЦСН (ФСБ) Балашиха')?.id, 'csn');
 assert.equal(resolveItoProject('Лужники БСА')?.id, 'luzhniki');
 
@@ -68,9 +70,9 @@ const described = normalizeTask(row({
 assert.equal(described.description, 'Первая строка\n\nВторая строка');
 
 // Active project registry is fixed to eight projects.
-assert.equal(ITO_PROJECTS.length, 8);
+assert.equal(ITO_PROJECTS.length, 9);
 const fixedProjects = summarizeProjectsV2(s1.tasks);
-assert.equal(fixedProjects.length, 8);
+assert.equal(fixedProjects.length, 9);
 assert.ok(fixedProjects.some(p => p.name === 'Казанский ЦУМ'));
 assert.ok(fixedProjects.some(p => p.name === 'Грозный планетарий'));
 assert.ok(fixedProjects.some(p => p.name === 'Музей Бахрушина'));
@@ -204,7 +206,7 @@ assert.ok(overloadSignals.find(x => x.name === 'Максим Буржински�
 // Operational work is not promoted into a ninth project.
 const operational = summarizeOperationalWork([internalTask]);
 assert.equal(operational.totalCount, 1);
-assert.equal(summarizeProjectsV2([internalTask]).length, 8);
+assert.equal(summarizeProjectsV2([internalTask]).length, 9);
 
 // Deadline churn becomes a dedicated attention signal.
 let d1 = snap([row({'Крайний срок':'10.10.2026 18:00'})], '2026-10-01T09:00:00');
