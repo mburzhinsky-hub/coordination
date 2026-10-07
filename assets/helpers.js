@@ -1,8 +1,37 @@
 'use strict';
 function isProjectContainerTitle(title) {
   const key = projectKey(title);
+  if (ITO_PROJECTS.some(project => projectKey(project.fullName) === key)) return true;
   if (KNOWN_PROJECT_CONTAINERS.some(name => projectKey(name) === key)) return true;
   return /(техническ(ая|ое)\s+(реализац|сопровожд)|тех\s*поддерж|гарантийн(ое|ый)\s+сопровожд|\bобслуживан|^просчеты\s+ито$|^задачи\s+руководителя\s+ито$|^пресейл\s+и\s+техническая\s+экспертиза)/i.test(cleanText(title));
+}
+
+function resolveItoProject(...values) {
+  const texts = values.map(projectKey).filter(Boolean);
+  for (const project of ITO_PROJECTS) {
+    const aliases = [project.name, project.fullName, ...(project.aliases || [])].map(projectKey);
+    if (texts.some(text => aliases.some(alias => alias && text.includes(alias)))) return project;
+  }
+  return null;
+}
+
+function itoProjectById(id) {
+  return ITO_PROJECTS.find(project => project.id === id) || null;
+}
+
+function normalizePresenceEntry(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { mode: '', projectId: '' };
+  const mode = PRESENCE_MODES.some(item => item.id === value.mode) ? value.mode : '';
+  const projectId = itoProjectById(value.projectId)?.id || '';
+  return { mode, projectId: mode === 'site' ? projectId : '' };
+}
+
+function presenceForPerson(presence, person) {
+  return normalizePresenceEntry(presence?.people?.[person]);
+}
+
+function presenceModeLabel(mode) {
+  return PRESENCE_MODES.find(item => item.id === mode)?.label || 'Не указано';
 }
 
 function shortenProjectName(value) {
