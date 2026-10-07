@@ -782,3 +782,10 @@ h1 { font-family: var(--display); font-size: clamp(32px, 3vw, 48px); line-height
 @media (max-width: 780px) {
   .sync-status { display: none; }
 }
+
+
+.location-counts .location-count-site {
+  grid-column: 1 / -1;
+  background: #e9eeea;
+  color: #4b6657;
+}
