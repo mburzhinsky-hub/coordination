@@ -93,7 +93,7 @@ function renderPeopleView(snapshot) {
   document.getElementById('viewRoot').innerHTML = `<section class="view-card">
     <div class="view-head"><div><h2>Люди</h2><p>Старый долг не считается текущей нагрузкой.</p></div><div class="summary-strip"><span class="summary-chip">перегруз ${overloaded}</span><span class="summary-chip">риск ${risk}</span><span class="summary-chip">резерв ${reserve}</span></div></div>
     <table class="data-table detail-table"><thead><tr><th>Сотрудник</th><th>Сейчас в работе</th><th>Проекты</th><th>Живых задач</th><th>Часы</th><th>Свежие сигналы</th><th>Старый долг</th><th>Статус</th></tr></thead><tbody>
-      ${people.map(p => `<tr><td><div class="person-cell"><span class="avatar">${escapeHtml(initials(p.name))}</span><span>${escapeHtml(p.name)}</span></div></td><td>${escapeHtml(p.focus || '—')}</td><td>${p.projectCount}</td><td>${p.liveCount}</td><td>${p.hours ? escapeHtml(formatHours(p.hours)) : '—'}</td><td>${p.attentionCount}</td><td>${p.debtCount}</td><td>${statusPill(p.status)}</td></tr>`).join('')}
+      ${people.map(p => `<tr><td><div class="person-cell"><span class="avatar">${escapeHtml(initials(p.name))}</span><span>${escapeHtml(p.name)}</span></div></td><td>${p.focusTaskId ? `<button class="task-link task-link-table" type="button" data-task-id="${escapeAttr(p.focusTaskId)}" title="${escapeAttr(p.focus)}">${escapeHtml(p.focus || '—')}</button>` : escapeHtml(p.focus || '—')}</td><td>${p.projectCount}</td><td>${p.liveCount}</td><td>${p.hours ? escapeHtml(formatHours(p.hours)) : '—'}</td><td>${p.attentionCount}</td><td>${p.debtCount}</td><td>${statusPill(p.status)}</td></tr>`).join('')}
     </tbody></table></section>`;
 }
 
@@ -154,7 +154,7 @@ function openTaskDetail(taskId) {
   ].filter(Boolean);
   document.getElementById('taskDetailMeta').innerHTML =
     meta.map(value => `<span>${escapeHtml(value)}</span>`).join('');
-  const description = cleanText(task.description || '');
+  const description = cleanMultilineText(task.description || '');
   document.getElementById('taskDetailDescription').textContent =
     description || 'Описание в выгрузке не заполнено.';
   const parentWrap = document.getElementById('taskDetailParentWrap');
