@@ -32,21 +32,21 @@ function Ensure-Node {
   $node = Find-Node
   if ($node) { return $node }
 
-  Write-Step "Node.js не найден. Устанавливаю Node.js LTS"
+  Write-Step "Node.js not found. Installing Node.js LTS"
   $winget = Get-Command winget -ErrorAction SilentlyContinue
   if (-not $winget) {
-    throw "Не найден ни Node.js, ни winget. Установите Node.js LTS с https://nodejs.org и запустите START_DASHBOARD.cmd снова."
+    throw "Neither Node.js nor winget was found. Install Node.js LTS from https://nodejs.org and run START_DASHBOARD.cmd again."
   }
 
   & $winget.Source install --id OpenJS.NodeJS.LTS -e --accept-package-agreements --accept-source-agreements
   if ($LASTEXITCODE -ne 0) {
-    throw "Не удалось автоматически установить Node.js через winget."
+    throw "Automatic Node.js installation failed."
   }
 
   $env:Path = "$env:Path;$env:ProgramFiles\nodejs"
   $node = Find-Node
   if (-not $node) {
-    throw "Node.js установлен, но текущая сессия его ещё не видит. Закройте это окно и запустите START_DASHBOARD.cmd ещё раз."
+    throw "Node.js was installed, but this shell cannot see it yet. Close this window and run START_DASHBOARD.cmd again."
   }
   return $node
 }
@@ -75,7 +75,7 @@ function Find-FreePort {
   foreach ($port in 8787..8797) {
     if (Test-PortFree $port) { return $port }
   }
-  throw "Порты 8787-8797 заняты. Освободите один из них и запустите снова."
+  throw "Ports 8787-8797 are busy. Free one of them and run again."
 }
 
 function Ensure-Config {
@@ -83,7 +83,7 @@ function Ensure-Config {
     return (Get-Content $ConfigPath -Raw | ConvertFrom-Json)
   }
 
-  Write-Step "Первый запуск. Создаю общую конфигурацию"
+  Write-Step "First run. Creating shared configuration"
   $port = Find-FreePort
   $password = New-StrongPassword
   $config = [ordered]@{
@@ -118,7 +118,7 @@ function Ensure-Firewall([int]$Port) {
     if ($exists) { return }
   } catch {}
 
-  Write-Step "Настраиваю Windows Firewall. Может появиться запрос UAC"
+  Write-Step "Configuring Windows Firewall. UAC may ask for approval"
   $command = @"
 Get-NetFirewallRule -DisplayName '$FirewallRule' -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
 New-NetFirewallRule -DisplayName '$FirewallRule' -Direction Inbound -Action Allow -Protocol TCP -LocalPort $Port -Profile Any -RemoteAddress 'LocalSubnet','100.64.0.0/10' | Out-Null
@@ -127,29 +127,28 @@ New-NetFirewallRule -DisplayName '$FirewallRule' -Direction Inbound -Action Allo
   try {
     $process = Start-Process powershell.exe -Verb RunAs -ArgumentList "-NoProfile -EncodedCommand $encoded" -Wait -PassThru
     if ($process.ExitCode -ne 0) {
-      Write-Warning "Не удалось добавить Firewall rule. Dashboard будет работать на этом ПК, но доступ коллеги может блокироваться Windows Firewall."
+      Write-Warning "Could not add the Firewall rule. Local access may still work, but another PC might be blocked by Windows Firewall."
     }
   } catch {
-    Write-Warning "Настройка Firewall пропущена: $($_.Exception.Message)"
+    Write-Warning "Firewall setup was skipped: $($_.Exception.Message)"
   }
 }
 
 function Start-SharedServer($NodePath, $Config) {
   if (Test-OurServer $Config) {
-    Write-Host "Сервер уже работает." -ForegroundColor Green
+    Write-Host "Server is already running." -ForegroundColor Green
     return
   }
 
   if (-not (Test-PortFree ([int]$Config.port))) {
-    throw "Порт $($Config.port) уже занят другим приложением. Закройте его или удалите server\config.local.json и запустите снова."
+    throw "Port $($Config.port) is already used by another application. Close it or remove server\config.local.json and run again."
   }
 
-  Write-Step "Запускаю общий сервер"
+  Write-Step "Starting shared server"
   if (Test-Path $StdOutLog) { Remove-Item $StdOutLog -Force -ErrorAction SilentlyContinue }
   if (Test-Path $StdErrLog) { Remove-Item $StdErrLog -Force -ErrorAction SilentlyContinue }
 
   $process = Start-Process -FilePath $NodePath -ArgumentList @("server\server.js") -WorkingDirectory $RepoRoot -WindowStyle Hidden -RedirectStandardOutput $StdOutLog -RedirectStandardError $StdErrLog -PassThru
-
   Set-Content -Path $PidPath -Value $process.Id -Encoding ASCII
 
   $ready = $false
@@ -162,9 +161,9 @@ function Start-SharedServer($NodePath, $Config) {
   if (-not $ready) {
     $errorText = ""
     if (Test-Path $StdErrLog) { $errorText = Get-Content $StdErrLog -Raw -ErrorAction SilentlyContinue }
-    throw "Сервер не запустился. $errorText"
+    throw "The server did not start. $errorText"
   }
-  Write-Host "Сервер запущен." -ForegroundColor Green
+  Write-Host "Server started." -ForegroundColor Green
 }
 
 function Get-LanIPv4 {
@@ -190,6 +189,7 @@ function Get-TailscaleIPv4 {
     if (Test-Path $candidate) { $tailscale = Get-Item $candidate }
   }
   if (-not $tailscale) { return $null }
+
   try {
     $ip = (& $tailscale.Source ip -4 2>$null | Select-Object -First 1)
     if ($ip) {
@@ -215,7 +215,7 @@ powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "$ru
 "@
     Set-Content -Path $cmdPath -Value $cmd -Encoding ASCII
   } catch {
-    Write-Warning "Не удалось установить автозапуск: $($_.Exception.Message)"
+    Write-Warning "Could not install autostart: $($_.Exception.Message)"
   }
 }
 
@@ -225,19 +225,19 @@ function Try-GitUpdate {
   try {
     $status = (& $git.Source -C $RepoRoot status --porcelain)
     if (-not $status) {
-      Write-Step "Проверяю обновления dashboard"
+      Write-Step "Checking dashboard updates"
       & $git.Source -C $RepoRoot pull --ff-only | Out-Host
     }
   } catch {
-    Write-Warning "Автообновление Git пропущено: $($_.Exception.Message)"
+    Write-Warning "Git auto-update skipped: $($_.Exception.Message)"
   }
 }
 
 try {
   [Console]::OutputEncoding = [Text.Encoding]::UTF8
   Write-Host ""
-  Write-Host "ITO COORDINATION - ОБЩИЙ DASHBOARD" -ForegroundColor White
-  Write-Host "==================================" -ForegroundColor DarkGray
+  Write-Host "ITO COORDINATION - SHARED DASHBOARD" -ForegroundColor White
+  Write-Host "===================================" -ForegroundColor DarkGray
 
   $node = Ensure-Node
   Try-GitUpdate
@@ -255,63 +255,70 @@ try {
   $shareUrl = if ($tailscaleUrl) { $tailscaleUrl } elseif ($lanUrl) { $lanUrl } else { $localUrl }
 
   $access = @"
-ITO Coordination - общий dashboard
-==================================
+ITO Coordination - shared dashboard
+===================================
 
-ССЫЛКА ДЛЯ КОЛЛЕГИ:
+COLLEAGUE URL:
 $shareUrl
 
-Логин:
+Login:
 $($config.user)
 
-Пароль:
+Password:
 $($config.password)
 
-Локально на серверном ПК:
+Local URL on server PC:
 $localUrl
 
-$(if ($tailscaleUrl) { "Tailscale: $tailscaleUrl" } else { "Tailscale: не обнаружен. Для доступа из другой сети установите Tailscale на оба компьютера." })
-$(if ($lanUrl) { "Локальная сеть: $lanUrl" } else { "Локальная сеть: адрес не определён." })
+$(if ($tailscaleUrl) { "Tailscale: $tailscaleUrl" } else { "Tailscale: not detected. Install Tailscale on both PCs for access from different networks." })
+$(if ($lanUrl) { "LAN: $lanUrl" } else { "LAN: address not detected." })
 
-ВАЖНО:
-- Давайте эту ссылку и пароль только сотруднику, которому нужен доступ.
-- Не делайте port forwarding порта $($config.port) на роутере.
-- Для доступа из другой сети используйте Tailscale.
-- Общая база хранится в: $RepoRoot\shared-data
+IMPORTANT:
+- Share this URL and password only with the intended colleague.
+- Do not configure router port forwarding for port $($config.port).
+- Use Tailscale for access from another network.
+- Shared data directory: $RepoRoot\shared-data
 "@
   Set-Content -Path $SharePath -Value $access -Encoding UTF8
 
   try { Set-Clipboard -Value $shareUrl } catch {}
 
   Write-Host ""
-  Write-Host "ГОТОВО" -ForegroundColor Green
-  Write-Host "------"
-  Write-Host "Ваш dashboard:      $localUrl"
-  Write-Host "Ссылка для коллеги: $shareUrl" -ForegroundColor Yellow
-  Write-Host "Логин:              $($config.user)"
-  Write-Host "Пароль:             $($config.password)"
+  Write-Host "READY" -ForegroundColor Green
+  Write-Host "-----"
+  Write-Host "Your dashboard:     $localUrl"
+  Write-Host "Colleague URL:      $shareUrl" -ForegroundColor Yellow
+  Write-Host "Login:              $($config.user)"
+  Write-Host "Password:           $($config.password)"
   Write-Host ""
-  Write-Host "Реквизиты также сохранены в:" -ForegroundColor DarkGray
+  Write-Host "Access details are also saved to:" -ForegroundColor DarkGray
   Write-Host $SharePath
   Write-Host ""
+
   if (-not $tailscaleUrl) {
-    Write-Host "Сейчас ссылка рассчитана для одной локальной сети." -ForegroundColor DarkYellow
-    Write-Host "Для доступа из другой сети установите Tailscale на оба ПК и снова запустите START_DASHBOARD.cmd."
+    Write-Host "The colleague URL currently works only in the same local network." -ForegroundColor DarkYellow
+    Write-Host "For different networks, install Tailscale on both PCs and run START_DASHBOARD.cmd again."
     Write-Host ""
   }
-  Write-Host "Ссылка скопирована в буфер обмена."
-  Write-Host "Открываю dashboard..."
+
+  Write-Host "The colleague URL was copied to clipboard."
+  Write-Host "Opening dashboard..."
   Start-Process $localUrl
 
   Write-Host ""
-  Write-Host "Это окно можно закрыть: сервер продолжит работать в фоне." -ForegroundColor DarkGray
-  Write-Host "При следующем входе в Windows сервер запустится автоматически." -ForegroundColor DarkGray
-  Read-Host "Нажмите Enter, чтобы закрыть это окно" | Out-Null
+  Write-Host "You can close this window. The server continues in the background." -ForegroundColor DarkGray
+  Write-Host "It will also start automatically after Windows sign-in." -ForegroundColor DarkGray
+  Read-Host "Press Enter to close this window" | Out-Null
 } catch {
   Write-Host ""
-  Write-Host "ОШИБКА" -ForegroundColor Red
+  Write-Host "ERROR" -ForegroundColor Red
   Write-Host $_.Exception.Message -ForegroundColor Red
   Write-Host ""
-  Read-Host "Нажмите Enter, чтобы закрыть окно" | Out-Null
+  if (Test-Path $StdErrLog) {
+    Write-Host "---- shared-server-error.log ----" -ForegroundColor DarkYellow
+    Get-Content $StdErrLog -Tail 80
+    Write-Host "---------------------------------" -ForegroundColor DarkYellow
+  }
+  Read-Host "Press Enter to close this window" | Out-Null
   exit 1
 }
