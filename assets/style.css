@@ -45,6 +45,9 @@ button { color: inherit; }
 .nav-item.is-active { background: rgba(218,218,215,.68); font-weight: 650; }
 .nav-icon { width: 28px; text-align: center; font-size: 24px; line-height: 1; }
 .nav-badge { min-width: 22px; height: 22px; border-radius: 999px; display: grid; place-items: center; padding: 0 6px; color: #fff; background: var(--danger); font-size: 11px; font-weight: 700; }
+.nav-item:has(.nav-badge) { grid-template-columns: 26px minmax(0,1fr) max-content; gap: 8px; padding-inline: 12px; }
+.nav-item:has(.nav-badge) > span:nth-child(2) { min-width: 0; white-space: nowrap; }
+.nav-item:has(.nav-badge) .nav-badge { justify-self: end; margin-left: 2px; }
 
 .workspace { padding: 6px 20px 34px 24px; min-width: 0; }
 .topbar { min-height: 72px; display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; padding: 4px 3px 18px; }
