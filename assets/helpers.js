@@ -8,9 +8,11 @@ function isProjectContainerTitle(title) {
 
 function resolveItoProject(...values) {
   const texts = values.map(projectKey).filter(Boolean);
-  for (const project of ITO_PROJECTS) {
-    const aliases = [project.name, project.fullName, ...(project.aliases || [])].map(projectKey);
-    if (texts.some(text => aliases.some(alias => alias && text.includes(alias)))) return project;
+  for (const text of texts) {
+    for (const project of ITO_PROJECTS) {
+      const aliases = [project.name, project.fullName, ...(project.aliases || [])].map(projectKey);
+      if (aliases.some(alias => alias && text.includes(alias))) return project;
+    }
   }
   return null;
 }
