@@ -78,7 +78,7 @@ function renderProjectsPanel(projects, snapshot = state.currentSnapshot) {
   return `<section class="panel management-panel">
     <div class="panel-head"><h2 class="panel-title">Проекты</h2><button class="panel-link" data-open-view="projects">все →</button></div>
     <div class="table-scroll"><table class="data-table management-table"><thead><tr><th>Проект</th><th>Активно</th><th>Контроль</th><th>Сигналы</th><th>Долг</th><th>Ближайший срок</th><th>Последнее движение</th></tr></thead><tbody>
-      ${projects.map(p => `<tr class="clickable-row" data-project-id="${escapeAttr(p.id)}"><td><strong>${escapeHtml(p.name)}</strong><div class="secondary">${escapeHtml(p.type)}</div></td><td>${p.activeCount}</td><td>${p.waitingControlCount}</td><td>${p.attentionCount ? projectRisk(p.risk) : '0'}</td><td>${p.debtCount}</td><td>${escapeHtml(p.nextDeadline ? formatDateShort(p.nextDeadline) : '—')}</td><td>${escapeHtml(relativeMovement(p.lastMovementAt, snapshot.asOf))}</td></tr>`).join('')}
+      ${projects.map(p => `<tr class="clickable-row" data-project-id="${escapeAttr(p.id)}"><td><strong>${escapeHtml(p.name)}</strong><div class="secondary">${escapeHtml(p.type)}</div></td><td>${p.activeCount}</td><td>${p.waitingControlCount}</td><td><span class="project-risk"><i class="signal-dot ${p.risk === 'high' ? 'critical' : p.risk === 'medium' ? 'watch' : 'none'}"></i>${p.attentionCount}</span></td><td>${p.debtCount}</td><td>${escapeHtml(p.nextDeadline ? formatDateShort(p.nextDeadline) : '—')}</td><td>${escapeHtml(relativeMovement(p.lastMovementAt, snapshot.asOf))}</td></tr>`).join('')}
     </tbody></table></div>
   </section>`;
 }
@@ -186,11 +186,12 @@ function renderProjectDetail(projectId) {
   const snapshot = state.currentSnapshot;
   if (!def || !snapshot) return;
   const rows = snapshot.tasks.filter(t => t.projectId === projectId && !t.isCompleted);
+  const summary = summarizeProjectsV2(snapshot.tasks, snapshot).find(p => p.id === projectId);
   const active = rows.filter(t => t.loadRelevant);
   const control = rows.filter(t => t.isWaitingControl);
   const attention = rows.filter(t => t.attention === 'critical' || t.attention === 'watch');
   const debt = rows.filter(t => t.debt !== 'none');
-  document.getElementById('viewRoot').innerHTML = `<section class="view-card"><div class="view-head"><div><button class="panel-link" data-open-view="projects">← проекты</button><h2>${escapeHtml(def.name)}</h2><p>${escapeHtml(def.type)}</p></div><div class="summary-strip"><span class="summary-chip">активно ${active.length}</span><span class="summary-chip">контроль ${control.length}</span><span class="summary-chip">сигналы ${attention.length}</span><span class="summary-chip">долг ${debt.length}</span></div></div>
+  document.getElementById('viewRoot').innerHTML = `<section class="view-card"><div class="view-head"><div><button class="panel-link" data-open-view="projects">← проекты</button><h2>${escapeHtml(def.name)}</h2><p>${escapeHtml(def.type)} · ближайший срок ${escapeHtml(summary?.nextDeadline ? formatDateShort(summary.nextDeadline) : '—')} · последнее движение ${escapeHtml(relativeMovement(summary?.lastMovementAt, snapshot.asOf))}</p></div><div class="summary-strip"><span class="summary-chip">активно ${active.length}</span><span class="summary-chip">контроль ${control.length}</span><span class="summary-chip">сигналы ${attention.length}</span><span class="summary-chip">долг ${debt.length}</span></div></div>
     ${renderTaskGroup('Требует внимания', attention)}
     ${renderTaskGroup('Активные задачи', active)}
     ${renderTaskGroup('Ждёт контроля', control)}
