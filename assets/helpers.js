@@ -70,11 +70,13 @@ function parseNumber(value) { const m=cleanText(value).replace(',','.').match(/-
 function splitPeople(value) { return unique(cleanText(value).split(/[,;\n]+/).map(cleanText).filter(Boolean)); }
 function cleanText(value) { return String(value??'').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim(); }
 function normalizeHeader(value) { return cleanText(value).toLowerCase().replace(/ё/g,'е'); }
-function projectKey(value) { return normalizeHeader(value).replace(/[«»“”„"]/g,'').replace(/[–—−]/g,'-').replace(/\s*-\s*/g,' - ').replace(/\s+/g,' ').trim(); }
+function projectKey(value) { return normalizeHeader(value).replace(/[«»“”„"]/g,'').replace(/_/g,' ').replace(/[–—−]/g,'-').replace(/\s*-\s*/g,' - ').replace(/\s+/g,' ').trim(); }
 function personKey(value) { return normalizeHeader(value).replace(/\s+/g,' '); }
 function canonicalItoName(value) {
   const key = personKey(value);
   if (!key) return '';
+  const aliases = { 'игорь виденеев': 'Игорь Виденнев', 'виденеев игорь': 'Игорь Виденнев' };
+  if (aliases[key]) return aliases[key];
   for (const name of ITO_ROSTER) {
     const canonicalKey = personKey(name);
     if (key === canonicalKey) return name;
