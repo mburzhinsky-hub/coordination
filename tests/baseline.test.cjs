@@ -53,7 +53,7 @@ assert.ok(!externalPeople.some(p => p.name === 'Внешний сотрудни�
 // Project identity comes from the Bitrix parent/base task and normalizes display suffixes.
 let s1 = snap([row()], '2026-10-01T09:00:00');
 assert.equal(s1.tasks[0].project, 'ЦСН');
-assert.equal(s1.tasks[0].projectFullName, 'ЦСН - техническая реализация');
+assert.equal(s1.tasks[0].projectFullName, 'ЦСН — техническая реализация');
 assert.equal(projectKey('ЦСН — техническая реализация'), projectKey('ЦСН - техническая реализация'));
 
 // Real 07 October export aliases resolve into the fixed active projects.
