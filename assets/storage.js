@@ -160,10 +160,22 @@ function hydrateTask(task) {
   const dateFields = ['deadline','actualStart','plannedStart','plannedEnd','created','changed','closed'];
   const next = {...task};
   dateFields.forEach(field => { next[field] = next[field] ? new Date(next[field]) : null; });
-  const resolvedProject = resolveItoProject(next.projectRaw, next.parentTitle, next.projectFullName, next.project);
+  const assignment = resolveProjectAssignment(next.projectRaw, next.parentTitle, next.title);
+  const resolvedProject = assignment.project;
   next.projectId = resolvedProject?.id || '';
-  next.project = resolvedProject?.name || 'Вне активных проектов';
-  next.projectFullName = resolvedProject?.fullName || next.projectFullName || next.projectRaw || next.parentTitle || 'Вне активных проектов';
+  next.project = resolvedProject?.name || 'Операционная работа';
+  next.projectFullName = resolvedProject?.fullName || next.projectRaw || next.parentTitle || 'Операционная работа';
+  next.projectFromField = assignment.projectFromField;
+  next.projectFromParent = assignment.projectFromParent;
+  next.projectFromTitle = assignment.projectFromTitle;
+  next.projectConflict = assignment.projectConflict;
+  next.workstream = next.projectId ? 'project' : 'operational';
+  next.operationalBucket = next.projectId ? '' : classifyOperationalBucket(next.title, next.parentTitle, next.projectRaw);
+  if (next.isWaitingControl && !next.controlSince) {
+    next.controlSince = (next.changed || new Date(next.snapshotAsOf)).toISOString();
+    next.controlAgeEstimated = Boolean(next.changed);
+    next.waitingControlDays = Math.max(0, diffDays(new Date(next.snapshotAsOf), new Date(next.controlSince)));
+  }
   return next;
 }
 
