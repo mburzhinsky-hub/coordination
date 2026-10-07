@@ -447,3 +447,35 @@ h1 { font-family: var(--display); font-size: clamp(32px, 3vw, 48px); line-height
   .task-detail-card { padding: 20px; border-radius: 22px; }
   .task-detail-head h2 { font-size: 23px; }
 }
+
+
+/* Task detail is a context-preserving right sheet on desktop */
+.task-dialog[open] {
+  position: fixed;
+  inset: 0 0 0 auto;
+  width: min(720px, 48vw);
+  height: 100vh;
+  max-height: none;
+  margin: 0;
+  border-radius: 0;
+}
+.task-dialog .task-detail-card {
+  min-height: 100vh;
+  max-height: 100vh;
+  border-radius: 28px 0 0 28px;
+  padding: 30px 32px 40px;
+}
+@media (max-width: 900px) {
+  .task-dialog[open] {
+    width: min(100vw, 680px);
+  }
+}
+@media (max-width: 640px) {
+  .task-dialog[open] {
+    width: 100vw;
+  }
+  .task-dialog .task-detail-card {
+    border-radius: 0;
+    padding: 22px 18px 32px;
+  }
+}
