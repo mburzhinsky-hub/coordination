@@ -204,14 +204,12 @@ function Ensure-Autostart {
   try {
     $startup = [Environment]::GetFolderPath("Startup")
     $cmdPath = Join-Path $startup "ITO Coordination Shared Server.cmd"
-    if (Test-Path $cmdPath) { return }
-
     $runner = Join-Path $PSScriptRoot "run-shared.ps1"
-    $logPath = Join-Path $RepoRoot "shared-server.log"
+    $logPath = Join-Path $RepoRoot "auto-update.log"
     $cmd = @"
 @echo off
 cd /d "$RepoRoot"
-powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "$runner" >> "$logPath" 2>&1
+start "" /min powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "$runner" >> "$logPath" 2>&1
 "@
     Set-Content -Path $cmdPath -Value $cmd -Encoding ASCII
   } catch {
