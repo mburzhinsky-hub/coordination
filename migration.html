@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ИТО — перенос общей базы</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: #f4f4f2; color: #171715; display: grid; place-items: center; padding: 24px; }
+    main { width: min(760px,100%); background: #fbfbfa; border: 1px solid #fff; border-radius: 28px; padding: 30px; box-shadow: 0 24px 70px rgba(0,0,0,.07); }
+    h1 { margin: 0; font-size: 30px; line-height: 1.1; }
+    p { color: #6f6f6a; line-height: 1.55; }
+    .mode { display: inline-flex; align-items: center; gap: 8px; padding: 7px 11px; border-radius: 999px; background: #ececea; font-size: 12px; }
+    .mode::before { content:""; width: 8px; height: 8px; border-radius: 50%; background: #aaa; }
+    .mode.shared { background:#e5f0e9; color:#2f6f53; }
+    .mode.shared::before { background:#2f8f63; }
+    .actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:24px; }
+    button,label.button { min-height:44px; display:inline-flex; align-items:center; justify-content:center; padding:0 18px; border:0; border-radius:999px; background:#111; color:#fff; cursor:pointer; font-weight:600; font-size:13px; }
+    button.secondary,label.secondary { background:#e9e9e6; color:#222; }
+    input[type=file] { display:none; }
+    .card { margin-top:24px; padding:18px; border-radius:18px; background:#f0f0ed; }
+    .status { margin-top:18px; min-height:24px; color:#555; font-size:13px; white-space:pre-wrap; }
+    code { background:#ececea; padding:2px 5px; border-radius:6px; }
+    a { color:#111; }
+  </style>
+</head>
+<body>
+<main>
+  <div id="mode" class="mode">Определяю режим…</div>
+  <h1 style="margin-top:18px">Перенос и резервная копия базы</h1>
+  <p id="intro">Эта страница переносит snapshots, «Кто где», настройки и сохранённые исходные выгрузки между локальным браузером и общим сервером.</p>
+
+  <div class="card">
+    <strong>1. Экспорт</strong>
+    <p id="exportHint">Скачайте JSON-копию текущей базы. Файл храните как резервную копию.</p>
+    <div class="actions">
+      <button id="exportButton" type="button">Скачать базу</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <strong>2. Импорт на общий сервер</strong>
+    <p>Откройте эту же страницу через локальный общий адрес, выберите ранее скачанный JSON и импортируйте его. Импорт доступен только когда страница работает через shared server.</p>
+    <div class="actions">
+      <label class="button secondary" for="backupInput">Выбрать JSON</label>
+      <input id="backupInput" type="file" accept=".json,application/json">
+      <button id="importButton" type="button" disabled>Импортировать</button>
+    </div>
+    <div id="selectedFile" class="status"></div>
+  </div>
+
+  <div id="status" class="status"></div>
+  <p><a href="./">← Вернуться в dashboard</a></p>
+</main>
+
+<script>
+'use strict';
+
+const DB_NAME = 'coordination.daily.v2';
+const DB_VERSION = 1;
+const STORES = ['snapshots','presence','sources','settings'];
+let sharedMode = false;
+let selectedBackup = null;
+
+document.addEventListener('DOMContentLoaded', init);
+
+async function init() {
+  sharedMode = await detectShared();
+  const mode = document.getElementById('mode');
+  mode.textContent = sharedMode ? 'Общий сервер' : 'Локальная браузерная база';
+  mode.classList.toggle('shared', sharedMode);
+  document.getElementById('exportHint').textContent = sharedMode
+    ? 'Скачайте резервную копию общей серверной базы.'
+    : 'Скачайте текущую базу из IndexedDB этого браузера. Это нужно сделать на старом GitHub Pages до перехода на общий сервер.';
+  document.getElementById('backupInput').addEventListener('change', handleFile);
+  document.getElementById('exportButton').addEventListener('click', exportBackup);
+  document.getElementById('importButton').addEventListener('click', importBackup);
+}
+
+async function detectShared() {
+  try {
+    const response = await fetch('/api/health', { cache:'no-store', credentials:'same-origin' });
+    if (!response.ok) return false;
+    const data = await response.json();
+    return data.shared === true;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function exportBackup() {
+  setStatus('Собираю базу…');
+  try {
+    const stores = {};
+    if (sharedMode) {
+      for (const name of STORES) stores[name] = await apiGetAll(name);
+    } else {
+      const db = await openLocalDb();
+      for (const name of STORES) stores[name] = await idbGetAll(db, name);
+      db.close();
+    }
+    const backup = {
+      format: 'coordination-backup-v1',
+      exportedAt: new Date().toISOString(),
+      source: sharedMode ? 'shared-server' : 'browser-indexeddb',
+      stores
+    };
+    const blob = new Blob([JSON.stringify(backup)], { type:'application/json;charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'coordination-backup-' + new Date().toISOString().slice(0,10) + '.json';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    setStatus('Готово. JSON-копия скачана.');
+  } catch (error) {
+    setStatus('Ошибка экспорта: ' + (error.message || error));
+  }
+}
+
+async function handleFile(event) {
+  selectedBackup = null;
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+  try {
+    const parsed = JSON.parse(await file.text());
+    if (parsed.format !== 'coordination-backup-v1' || !parsed.stores) throw new Error('Это не backup coordination.');
+    selectedBackup = parsed;
+    document.getElementById('selectedFile').textContent = file.name + ' · экспорт ' + (parsed.exportedAt || 'без даты');
+    document.getElementById('importButton').disabled = !sharedMode;
+    if (!sharedMode) setStatus('Импорт возможен только на странице, открытой через общий локальный сервер.');
+  } catch (error) {
+    document.getElementById('selectedFile').textContent = '';
+    document.getElementById('importButton').disabled = true;
+    setStatus('Ошибка файла: ' + (error.message || error));
+  }
+}
+
+async function importBackup() {
+  if (!sharedMode || !selectedBackup) return;
+  const total = STORES.reduce((sum,name) => sum + (selectedBackup.stores[name] || []).length, 0);
+  let done = 0;
+  setStatus('Импортирую 0 / ' + total + '…');
+  try {
+    for (const name of STORES) {
+      for (const row of selectedBackup.stores[name] || []) {
+        const key = name === 'presence' ? row.snapshotId : row.id;
+        if (!key) continue;
+        const response = await fetch('/api/store/' + encodeURIComponent(name) + '/' + encodeURIComponent(key), {
+          method:'PUT',
+          cache:'no-store',
+          credentials:'same-origin',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify(row)
+        });
+        if (!response.ok) throw new Error(await response.text());
+        done += 1;
+        setStatus('Импортирую ' + done + ' / ' + total + '…');
+      }
+    }
+    setStatus('Готово. Импортировано записей: ' + done + '. Теперь вернитесь в dashboard и обновите страницу.');
+  } catch (error) {
+    setStatus('Ошибка импорта после ' + done + ' записей: ' + (error.message || error));
+  }
+}
+
+async function apiGetAll(name) {
+  const response = await fetch('/api/store/' + encodeURIComponent(name), { cache:'no-store', credentials:'same-origin' });
+  if (!response.ok) throw new Error(await response.text());
+  return await response.json();
+}
+
+function openLocalDb() {
+  return new Promise((resolve,reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onerror = () => reject(request.error);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      for (const name of STORES) {
+        if (!db.objectStoreNames.contains(name)) {
+          const keyPath = name === 'presence' ? 'snapshotId' : 'id';
+          db.createObjectStore(name, { keyPath });
+        }
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+  });
+}
+
+function idbGetAll(db, name) {
+  return new Promise((resolve,reject) => {
+    const request = db.transaction(name,'readonly').objectStore(name).getAll();
+    request.onsuccess = () => resolve(request.result || []);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function setStatus(text) {
+  document.getElementById('status').textContent = text;
+}
+</script>
+</body>
+</html>
