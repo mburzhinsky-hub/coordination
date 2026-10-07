@@ -166,6 +166,31 @@ function Start-SharedServer($NodePath, $Config) {
   Write-Host "Server started." -ForegroundColor Green
 }
 
+function Start-Supervisor {
+  $supervisor = Join-Path $PSScriptRoot "supervisor.ps1"
+  if (-not (Test-Path $supervisor)) {
+    Write-Warning "Auto-update supervisor was not found."
+    return
+  }
+
+  $existing = $null
+  $supervisorPidPath = Join-Path $RepoRoot ".supervisor.pid"
+  if (Test-Path $supervisorPidPath) {
+    try {
+      $existingPid = [int](Get-Content $supervisorPidPath -Raw)
+      $existing = Get-Process -Id $existingPid -ErrorAction SilentlyContinue
+    } catch {}
+  }
+  if ($existing) { return }
+
+  Start-Process powershell.exe -ArgumentList @(
+    "-NoProfile",
+    "-WindowStyle", "Hidden",
+    "-ExecutionPolicy", "Bypass",
+    "-File", $supervisor
+  ) -WorkingDirectory $RepoRoot -WindowStyle Hidden | Out-Null
+}
+
 function Get-LanIPv4 {
   try {
     $routes = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix "0.0.0.0/0" -ErrorAction Stop | Sort-Object RouteMetric
@@ -245,6 +270,7 @@ try {
   $config = Ensure-Config
   Ensure-Firewall ([int]$config.port)
   Start-SharedServer $node $config
+  Start-Supervisor
   Ensure-Autostart
 
   $localUrl = "http://localhost:$($config.port)"
