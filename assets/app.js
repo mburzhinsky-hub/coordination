@@ -128,16 +128,22 @@ function bindUi() {
   const save = document.getElementById('presenceSave');
   if (save) save.addEventListener('click', async () => savePendingPresence(true));
   const matrix = document.getElementById('presenceMatrix');
-  if (matrix) matrix.addEventListener('click', event => {
-    const button = event.target.closest('[data-presence-person][data-presence-project]');
-    if (!button || !state.pendingPresence) return;
-    const person = button.dataset.presencePerson;
-    const project = button.dataset.presenceProject;
-    const current = Number(state.pendingPresence.people?.[person]?.[project] || 0);
-    const next = (current + 1) % 4;
-    if (!state.pendingPresence.people[person]) state.pendingPresence.people[person] = {};
-    state.pendingPresence.people[person][project] = next;
-    updatePresenceButton(button, next);
+  if (matrix) matrix.addEventListener('change', event => {
+    if (!state.pendingPresence) return;
+    const modeSelect = event.target.closest('[data-presence-person]');
+    if (modeSelect) {
+      const person = modeSelect.dataset.presencePerson;
+      if (!state.pendingPresence.people[person]) state.pendingPresence.people[person] = { mode: 'office', projectId: '' };
+      state.pendingPresence.people[person].mode = modeSelect.value;
+      updatePresenceRow(person);
+      return;
+    }
+    const projectSelect = event.target.closest('[data-presence-project-person]');
+    if (projectSelect) {
+      const person = projectSelect.dataset.presenceProjectPerson;
+      if (!state.pendingPresence.people[person]) state.pendingPresence.people[person] = { mode: 'site', projectId: '' };
+      state.pendingPresence.people[person].projectId = projectSelect.value;
+    }
   });
   document.getElementById('viewRoot')?.addEventListener('click', event => {
     const link = event.target.closest('[data-open-view]');
