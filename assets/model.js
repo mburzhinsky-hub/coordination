@@ -25,8 +25,8 @@ function deriveEvents(currentTasks, previousTasks, asOf, allKnownIds = new Set()
     if (prev.overdue && task.isCompleted) push('OVERDUE_RESOLVED_BY_COMPLETION', 'success', task, 'просрочка закрыта завершением');
     if (deadlineChanged) {
       if (prev.deadline && !task.deadline) push('DEADLINE_REMOVED', 'critical', task, 'срок удалён');
-      else if (prev.overdue && !task.overdue && !task.isCompleted) push('OVERDUE_DEADLINE_MOVED', 'watch', task, 'просрочка снята переносом срока');
-      else push('DEADLINE_CHANGED', 'watch', task, 'срок изменён');
+      else if (prev.overdue && !task.overdue && !task.isCompleted) push('OVERDUE_DEADLINE_MOVED', 'watch', task, 'просрочка снята переносом срока', `${dateKey(prev.deadline) || 'без срока'} → ${dateKey(task.deadline) || 'без срока'}`);
+      else push('DEADLINE_CHANGED', 'watch', task, 'срок изменён', `${dateKey(prev.deadline) || 'без срока'} → ${dateKey(task.deadline) || 'без срока'}`);
     }
     if (responsibleChanged) push('RESPONSIBLE_CHANGED', 'watch', task, `сменился ответственный: ${prev.responsible} → ${task.responsible}`);
     if (statusChanged) push('STATUS_CHANGED', 'info', task, `статус: ${prev.status || '—'} → ${task.status || '—'}`);
@@ -242,9 +242,11 @@ function summarizeChanges(snapshot) {
     control: events.filter(e => e.type === 'BECAME_WAITING_CONTROL').length
   };
   const priority = { critical: 4, watch: 3, success: 2, info: 1, neutral: 0 };
-  const meaningful = events.filter(e => !['STATUS_CHANGED','TASK_REMOVED','BECAME_STALE','BECAME_CHRONIC','BECAME_LEGACY'].includes(e.type))
+  const taskMap = new Map(snapshot.tasks.map(t => [String(t.id), t]));
+  const meaningful = events.filter(e => !['STATUS_CHANGED','TASK_REMOVED','BECAME_STALE','BECAME_CHRONIC','BECAME_LEGACY','OVERDUE_RESOLVED_BY_COMPLETION'].includes(e.type))
     .sort((a,b) => (priority[b.severity]||0)-(priority[a.severity]||0))
-    .slice(0,5);
+    .slice(0,5)
+    .map(event => ({...event, taskTitle: taskMap.get(String(event.taskId))?.title || event.detail || 'Задача'}));
   return { counts, meaningful };
 }
 
