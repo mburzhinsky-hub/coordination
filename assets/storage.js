@@ -7,7 +7,7 @@ async function preparePresenceEditor(snapshot, force = false) {
   const draft = { snapshotId: snapshot.id, asOf: snapshot.asOf, people: {} };
   roster.forEach(person => {
     const prior = normalizePresenceEntry(previous?.people?.[person]);
-    draft.people[person] = { mode: prior.mode || 'office', projectId: prior.projectId || '' };
+    draft.people[person] = { mode: prior.mode || '', projectId: prior.projectId || '' };
   });
   state.pendingPresence = draft;
   state.pendingPresenceSnapshotId = snapshot.id;
@@ -19,7 +19,7 @@ function renderPresenceEditor(roster, draft) {
   const projectOptions = ITO_PROJECTS.map(project => `<option value="${escapeAttr(project.id)}">${escapeHtml(project.name)}</option>`).join('');
   document.getElementById('presenceMatrix').innerHTML = `<table class="presence-edit-table"><thead><tr><th>Сотрудник</th><th>Где сегодня</th><th>Проект / объект</th></tr></thead><tbody>${roster.map(person => {
     const entry = normalizePresenceEntry(draft.people?.[person]);
-    return `<tr><td>${escapeHtml(person)}</td><td><select class="presence-mode-select" data-presence-person="${escapeAttr(person)}">${PRESENCE_MODES.map(mode => `<option value="${mode.id}" ${entry.mode === mode.id ? 'selected' : ''}>${escapeHtml(mode.label)}</option>`).join('')}</select></td><td><select class="presence-project-select" data-presence-project-person="${escapeAttr(person)}" ${entry.mode === 'site' ? '' : 'disabled'}><option value="">Выберите проект</option>${projectOptions.replace(`value="${entry.projectId}"`, `value="${entry.projectId}" selected`)}</select></td></tr>`;
+    return `<tr><td>${escapeHtml(person)}</td><td><select class="presence-mode-select" data-presence-person="${escapeAttr(person)}"><option value="" ${entry.mode ? '' : 'selected'}>Не указано</option>${PRESENCE_MODES.map(mode => `<option value="${mode.id}" ${entry.mode === mode.id ? 'selected' : ''}>${escapeHtml(mode.label)}</option>`).join('')}</select></td><td><select class="presence-project-select" data-presence-project-person="${escapeAttr(person)}" ${entry.mode === 'site' ? '' : 'disabled'}><option value="">Выберите проект</option>${projectOptions.replace(`value="${entry.projectId}"`, `value="${entry.projectId}" selected`)}</select></td></tr>`;
   }).join('')}</tbody></table>`;
 }
 
@@ -38,7 +38,7 @@ async function savePendingPresence(useChanges) {
   if (!state.pendingPresenceSnapshotId) return;
   const payload = state.pendingPresence || { snapshotId: state.pendingPresenceSnapshotId, asOf: state.currentSnapshot.asOf, people: {} };
   for (const person of ITO_ROSTER) {
-    payload.people[person] = normalizePresenceEntry(payload.people[person] || { mode: 'office', projectId: '' });
+    payload.people[person] = normalizePresenceEntry(payload.people[person] || { mode: '', projectId: '' });
   }
   await putRecord('presence', payload);
   state.presence = payload;
