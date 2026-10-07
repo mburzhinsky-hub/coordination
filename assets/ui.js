@@ -165,7 +165,7 @@ function renderPeopleView(snapshot) {
 function renderProjectsView(snapshot) {
   const projects = summarizeProjectsV2(snapshot.tasks, snapshot);
   document.getElementById('viewRoot').innerHTML = `<section class="view-card">
-    <div class="view-head"><div><h2>Проекты</h2><p>Восемь основных проектов: движение, контроль, свежие сигналы и долг.</p></div></div>
+    <div class="view-head"><div><h2>Проекты</h2><p>Девять основных проектов: движение, контроль, свежие сигналы и долг.</p></div></div>
     ${renderProjectsPanel(projects, snapshot)}
   </section>`;
 }
