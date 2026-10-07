@@ -21,6 +21,7 @@ function deriveEvents(currentTasks, previousTasks, asOf, allKnownIds = new Set()
     const meaningfulChange = deadlineChanged || responsibleChanged || statusChanged || bitrixChanged;
 
     if (task.overdue && !prev.overdue) push('BECAME_OVERDUE', 'critical', task, `новая просрочка ${task.overdueDays} дн.`);
+    if (!prev.isCompleted && task.isCompleted) push('TASK_COMPLETED', 'success', task, 'задача завершена');
     if (prev.overdue && task.isCompleted) push('OVERDUE_RESOLVED_BY_COMPLETION', 'success', task, 'просрочка закрыта завершением');
     if (deadlineChanged) {
       if (prev.deadline && !task.deadline) push('DEADLINE_REMOVED', 'critical', task, 'срок удалён');
@@ -30,7 +31,7 @@ function deriveEvents(currentTasks, previousTasks, asOf, allKnownIds = new Set()
     if (responsibleChanged) push('RESPONSIBLE_CHANGED', 'watch', task, `сменился ответственный: ${prev.responsible} → ${task.responsible}`);
     if (statusChanged) push('STATUS_CHANGED', 'info', task, `статус: ${prev.status || '—'} → ${task.status || '—'}`);
     if (task.isWaitingControl && !prev.isWaitingControl) push('BECAME_WAITING_CONTROL', 'watch', task, 'результат передан на контроль');
-    if (!task.isWaitingControl && prev.isWaitingControl) push('LEFT_CONTROL', 'success', task, 'задача вышла из контроля');
+    if (!task.isWaitingControl && prev.isWaitingControl && !task.isCompleted) push('LEFT_CONTROL', 'watch', task, 'задача вышла из контроля — проверить следующий ход');
     if (task.isWaitingControl && prev.waitingControlDays < CONTROL_WATCH_DAYS && task.waitingControlDays >= CONTROL_WATCH_DAYS) push('CONTROL_3_DAYS', 'watch', task, `контроль ${CONTROL_WATCH_DAYS} дня — подключить наблюдение`);
     if (task.isWaitingControl && prev.waitingControlDays < CONTROL_CRITICAL_DAYS && task.waitingControlDays >= CONTROL_CRITICAL_DAYS) push('CONTROL_5_DAYS', 'critical', task, `приёмка ждёт ${CONTROL_CRITICAL_DAYS} дней`);
     if (prev.activity !== 'stale' && task.activity === 'stale') push('BECAME_STALE', 'info', task, 'нет движения больше 14 дней');
@@ -234,7 +235,7 @@ function summarizeDataQuality(snapshot, presence = {people:{}}) {
 function summarizeChanges(snapshot) {
   const events = snapshot.events || [];
   const counts = {
-    completed: events.filter(e => e.type === 'OVERDUE_RESOLVED_BY_COMPLETION' || (e.type === 'STATUS_CHANGED' && /заверш/i.test(e.label))).length,
+    completed: events.filter(e => e.type === 'TASK_COMPLETED').length,
     added: events.filter(e => e.type === 'TASK_ADDED' || e.type === 'TASK_RETURNED').length,
     newOverdue: events.filter(e => e.type === 'BECAME_OVERDUE').length,
     deadlineMoved: events.filter(e => e.type === 'DEADLINE_CHANGED' || e.type === 'OVERDUE_DEADLINE_MOVED' || e.type === 'DEADLINE_REMOVED' || e.type === 'DEADLINE_CHURN').length,
