@@ -187,6 +187,20 @@ assert.ok(Object.prototype.hasOwnProperty.call(engineerFacts, 'activeCount'));
 assert.ok(Object.prototype.hasOwnProperty.call(engineerFacts, 'waitingControlCount'));
 assert.ok(!Object.prototype.hasOwnProperty.call(engineerFacts, 'status'));
 
+// Possible overload is advisory and explainable, not a definitive status.
+const overloadTasks = [
+  normalizeTask(row({'ID задачи':'201','Ответственный':'Максим Буржинский','Название базовой задачи':'ЦСН - техническая реализация'}),0,new Date('2026-10-06T09:00:00'),null),
+  normalizeTask(row({'ID задачи':'202','Ответственный':'Максим Буржинский','Название базовой задачи':'Лужники - техническое сопровождение'}),1,new Date('2026-10-06T09:00:00'),null),
+  normalizeTask(row({'ID задачи':'203','Ответственный':'Максим Буржинский','Название базовой задачи':'Музей Бахрушина — техническая реализация'}),2,new Date('2026-10-06T09:00:00'),null),
+  normalizeTask(row({'ID задачи':'204','Ответственный':'Максим Буржинский','Крайний срок':'07.10.2026 18:00'}),3,new Date('2026-10-06T09:00:00'),null),
+  normalizeTask(row({'ID задачи':'205','Ответственный':'Максим Буржинский'}),4,new Date('2026-10-06T09:00:00'),null),
+  normalizeTask(row({'ID задачи':'206','Ответственный':'Максим Буржинский'}),5,new Date('2026-10-06T09:00:00'),null)
+];
+const overloadPeople = summarizePeopleV2(overloadTasks, {people:{}}, []);
+const overloadSignals = summarizePossibleOverload(overloadTasks, overloadPeople);
+assert.ok(overloadSignals.some(x => x.name === 'Максим Буржинский'));
+assert.ok(overloadSignals.find(x => x.name === 'Максим Буржинский').reasons.length > 0);
+
 // Operational work is not promoted into a ninth project.
 const operational = summarizeOperationalWork([internalTask]);
 assert.equal(operational.totalCount, 1);
