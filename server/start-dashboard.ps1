@@ -14,8 +14,8 @@ function Write-Step([string]$Text) {
 }
 
 function Find-Node {
-  $cmd = Get-Command node -ErrorAction SilentlyContinue
-  if ($cmd) { return $cmd.Source }
+  $cmd = Get-Command node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($cmd) { return [string]$cmd.Source }
   $programFilesX86 = [Environment]::GetFolderPath("ProgramFilesX86")
   $candidates = @(
     "$env:ProgramFiles\nodejs\node.exe",
@@ -38,7 +38,7 @@ function Ensure-Node {
     throw "Neither Node.js nor winget was found. Install Node.js LTS from https://nodejs.org and run START_DASHBOARD.cmd again."
   }
 
-  & $winget.Source install --id OpenJS.NodeJS.LTS -e --accept-package-agreements --accept-source-agreements
+  & $winget.Source install --id OpenJS.NodeJS.LTS -e --accept-package-agreements --accept-source-agreements | Out-Host
   if ($LASTEXITCODE -ne 0) {
     throw "Automatic Node.js installation failed."
   }
@@ -239,7 +239,10 @@ try {
   Write-Host "ITO COORDINATION - SHARED DASHBOARD" -ForegroundColor White
   Write-Host "===================================" -ForegroundColor DarkGray
 
-  $node = Ensure-Node
+  $node = [string](@(Ensure-Node) | Select-Object -Last 1)
+  if (-not $node -or -not (Test-Path $node)) {
+    throw "Node.js executable path could not be resolved."
+  }
   Try-GitUpdate
   $config = Ensure-Config
   Ensure-Firewall ([int]$config.port)
