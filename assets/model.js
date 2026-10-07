@@ -122,37 +122,41 @@ function summarizePeopleV2(tasks, presence = {people:{}}, roster = []) {
     const live = owned.filter(t => t.loadRelevant);
     const attentionTasks = tasks.filter(t => (t.attention === 'critical' || t.attention === 'watch') && (t.ballOwner?.people || []).some(p => canonicalItoName(p) === name));
     const debtCount = owned.filter(t => t.debt !== 'none').length;
-    const manual = presence.people?.[name] || {};
-    const manualProjects = Object.entries(manual).filter(([,v]) => Number(v) > 0).sort((a,b) => Number(b[1]) - Number(a[1]));
-    const taskProjects = unique(live.map(t => t.project).filter(Boolean));
-    const projectCount = manualProjects.length || taskProjects.length;
+    const manual = presenceForPerson(presence, name);
+    const taskProjects = unique(live.map(t => t.projectId).filter(Boolean));
+    const projectCount = taskProjects.length;
     const hours = sum(live.map(t => taskPlannedHours(t)));
     const topTask = [...live].sort((a,b) => taskFocusRank(b) - taskFocusRank(a))[0];
-    const focus = manualProjects[0]?.[0] || topTask?.title || '—';
-    const manualPeak = Math.max(0, ...Object.values(manual).map(Number));
+    const locationProject = manual.mode === 'site' ? itoProjectById(manual.projectId) : null;
+    const location = manual.mode === 'site' && locationProject ? `На объекте · ${locationProject.name}` : presenceModeLabel(manual.mode);
+    const focus = topTask?.title || '—';
     let status = 'normal';
-    if (manualPeak >= 3 || hours >= 32 || live.length >= 7) status = 'overload';
+    if (hours >= 32 || live.length >= 7) status = 'overload';
     else if (attentionTasks.length) status = 'risk';
-    else if (live.length <= 2 && manualPeak <= 1) status = 'reserve';
-    return { name, liveCount: live.length, hours, attentionCount: attentionTasks.length, debtCount, projectCount, focus, status };
+    else if (manual.mode === 'vacation') status = 'normal';
+    else if (live.length <= 2) status = 'reserve';
+    return { name, liveCount: live.length, hours, attentionCount: attentionTasks.length, debtCount, projectCount, focus, location, presenceMode: manual.mode, presenceProjectId: manual.projectId, status };
   });
 }
 
 function summarizeProjectsV2(tasks) {
-  const groups = groupBy(tasks.filter(t => !t.isCompleted && t.project && t.project !== 'Без проекта'), t => t.project);
-  return Object.entries(groups).map(([name, rows]) => {
+  return ITO_PROJECTS.map(projectDef => {
+    const rows = tasks.filter(t => !t.isCompleted && t.projectId === projectDef.id);
     const live = rows.filter(t => t.loadRelevant);
     const attention = rows.filter(t => t.attention === 'critical' || t.attention === 'watch');
     const debt = rows.filter(t => t.debt !== 'none');
     const critical = attention.filter(t => t.attention === 'critical').length;
     const responsible = mode((live.length ? live : rows).map(t => canonicalItoName(t.responsible)).filter(Boolean)) || '—';
     const peopleCount = unique(live.map(t => canonicalItoName(t.responsible)).filter(Boolean)).length;
-    const deadlines = rows.map(t => t.deadline).filter(Boolean).filter(d => d >= new Date(rows[0].snapshotAsOf)).sort((a,b) => a-b);
-    const stage = deriveProjectStage(rows);
+    const now = rows[0]?.snapshotAsOf ? new Date(rows[0].snapshotAsOf) : new Date();
+    const deadlines = rows.map(t => t.deadline).filter(Boolean).filter(d => d >= now).sort((a,b) => a-b);
+    const stage = rows.length ? deriveProjectStage(rows) : 'Нет активных задач';
     const risk = critical ? 'high' : attention.length ? 'medium' : 'none';
     return {
-      name,
-      fullName: mode(rows.map(t => t.projectFullName).filter(Boolean)) || name,
+      id: projectDef.id,
+      name: projectDef.name,
+      fullName: projectDef.fullName,
+      type: projectDef.type,
       responsible,
       stage,
       liveTasks: live.length,
