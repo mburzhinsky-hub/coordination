@@ -40,6 +40,7 @@ function snap(rows, iso, previous=null, history=[]) {
 assert.equal(ITO_ROSTER.length, 12);
 assert.deepEqual(mergeRoster([], ['Внешний сотрудник'], {people:{'Внешний сотрудник':{}}}), ITO_ROSTER);
 assert.equal(canonicalItoName('Буржинский Максим'), 'Максим Буржинский');
+assert.equal(canonicalItoName('Игорь Виденеев'), 'Игорь Виденнев');
 assert.equal(isItoMember('Внешний сотрудник'), false);
 // Bitrix reverse name order is assigned to the correct ITO employee.
 const reversed = normalizeTask(row({'Ответственный':'Буржинский Максим'}),0,new Date('2026-10-06T09:00:00'),null);
@@ -54,6 +55,17 @@ let s1 = snap([row()], '2026-10-01T09:00:00');
 assert.equal(s1.tasks[0].project, 'ЦСН');
 assert.equal(s1.tasks[0].projectFullName, 'ЦСН - техническая реализация');
 assert.equal(projectKey('ЦСН — техническая реализация'), projectKey('ЦСН - техническая реализация'));
+
+// Real 07 October export aliases resolve into the fixed active projects.
+assert.equal(resolveItoProject('ЦУМ. Профцентр в Казани')?.id, 'kazan');
+assert.equal(resolveItoProject('Грозный. Музей космонавтики(308)')?.id, 'grozny');
+assert.equal(resolveItoProject('P211-24-09 Музей ЦСН (ФСБ) Балашиха')?.id, 'csn');
+assert.equal(resolveItoProject('Лужники БСА')?.id, 'luzhniki');
+
+const described = normalizeTask(row({
+  'Описание':'Первая строка\n\nВторая строка'
+}),0,new Date('2026-10-06T09:00:00'),null);
+assert.equal(described.description, 'Первая строка\n\nВторая строка');
 
 // Active project registry is fixed to eight projects.
 assert.equal(ITO_PROJECTS.length, 8);
