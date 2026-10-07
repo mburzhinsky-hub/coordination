@@ -145,7 +145,12 @@ function bindUi() {
       state.pendingPresence.people[person].projectId = projectSelect.value;
     }
   });
-  document.getElementById('viewRoot')?.addEventListener('click', event => {
+  document.getElementById('viewRoot')?.addEventListener('click', async event => {
+    const editPresence = event.target.closest('[data-edit-presence]');
+    if (editPresence && state.currentSnapshot) {
+      await preparePresenceEditor(state.currentSnapshot, true);
+      return;
+    }
     const link = event.target.closest('[data-open-view]');
     if (link) switchView(link.dataset.openView);
   });
