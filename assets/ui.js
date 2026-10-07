@@ -43,7 +43,7 @@ function renderChangesPanel(changes, firstSnapshot) {
     <div class="change-summary">
       <span><strong>${c.completed}</strong> закрыто</span><span><strong>${c.added}</strong> новых</span><span><strong>${c.newOverdue}</strong> новых просрочек</span><span><strong>${c.deadlineMoved}</strong> изменений срока</span><span><strong>${c.control}</strong> ушли на контроль</span>
     </div>
-    <div class="change-list">${changes.meaningful.map(event => `<button class="change-row" type="button" data-task-id="${escapeAttr(event.taskId)}"><span class="signal-dot ${event.severity === 'critical' ? 'critical' : event.severity === 'watch' ? 'watch' : 'none'}"></span><span class="change-project">${escapeHtml(event.project || 'Операционная работа')}</span><span class="change-text">${escapeHtml(event.label)}</span></button>`).join('') || '<div class="attention-empty">Значимых изменений нет.</div>'}</div>
+    <div class="change-list">${changes.meaningful.map(event => `<button class="change-row" type="button" data-task-id="${escapeAttr(event.taskId)}"><span class="signal-dot ${event.severity === 'critical' ? 'critical' : event.severity === 'watch' ? 'watch' : 'none'}"></span><span class="change-project">${escapeHtml(event.project || 'Операционная работа')}</span><span class="change-text"><strong>${escapeHtml(event.taskTitle || 'Задача')}</strong><small>${escapeHtml(event.label)}${event.detail ? ' · '+escapeHtml(event.detail) : ''}</small></span></button>`).join('') || '<div class="attention-empty">Значимых изменений нет.</div>'}</div>
   </section>`;
 }
 
@@ -237,7 +237,8 @@ function openTaskDetail(taskId) {
     task.inactivityDays ? `Без движения · ${task.inactivityDays} дн.` : '',
     task.attention !== 'none' ? `Attention · ${task.attentionReason || task.attention}` : '',
     task.debt !== 'none' ? `Debt · ${task.debt}` : '',
-    task.ballOwner?.people?.length ? `Мяч · ${task.ballOwner.people.join(', ')}` : ''
+    task.ballOwner?.people?.length ? `Мяч · ${task.ballOwner.people.join(', ')}` : '',
+    task.loadRelevant ? 'Класс · live' : ''
   ].filter(Boolean);
   document.getElementById('taskDetailMeta').innerHTML =
     meta.map(value => `<span>${escapeHtml(value)}</span>`).join('');
