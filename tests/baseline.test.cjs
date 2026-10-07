@@ -55,6 +55,47 @@ assert.equal(s1.tasks[0].project, 'ЦСН');
 assert.equal(s1.tasks[0].projectFullName, 'ЦСН - техническая реализация');
 assert.equal(projectKey('ЦСН — техническая реализация'), projectKey('ЦСН - техническая реализация'));
 
+// Active project registry is fixed to eight projects.
+assert.equal(ITO_PROJECTS.length, 8);
+const fixedProjects = summarizeProjectsV2(s1.tasks);
+assert.equal(fixedProjects.length, 8);
+assert.ok(fixedProjects.some(p => p.name === 'Казанский ЦУМ'));
+assert.ok(fixedProjects.some(p => p.name === 'Грозный планетарий'));
+assert.ok(fixedProjects.some(p => p.name === 'Музей Бахрушина'));
+assert.ok(fixedProjects.some(p => p.name === 'ЦСН'));
+assert.ok(fixedProjects.some(p => p.name === 'ЕКБ'));
+assert.ok(fixedProjects.some(p => p.name === 'Лужники'));
+assert.ok(fixedProjects.some(p => p.name === 'Музей Тапиау'));
+assert.ok(fixedProjects.some(p => p.name === 'Дом культур'));
+
+// Explicit Bitrix project has priority over an unrelated parent/base task.
+const explicitProject = normalizeTask(row({
+  'Проект':'Лужники',
+  'Название базовой задачи':'Общие офисные и внутренние задачи'
+}),0,new Date('2026-10-06T09:00:00'),null);
+assert.equal(explicitProject.projectId, 'luzhniki');
+assert.equal(explicitProject.project, 'Лужники');
+
+// Parent/base task is the fallback when the explicit project field is empty.
+const parentProject = normalizeTask(row({
+  'Проект':'',
+  'Название базовой задачи':'Музей имени Бахрушина — техническая реализация'
+}),0,new Date('2026-10-06T09:00:00'),null);
+assert.equal(parentProject.projectId, 'bakhrushin');
+assert.equal(parentProject.project, 'Музей Бахрушина');
+
+// Unknown internal parents do not create extra active projects.
+const internalTask = normalizeTask(row({
+  'Название базовой задачи':'Просчеты ИТО'
+}),0,new Date('2026-10-06T09:00:00'),null);
+assert.equal(internalTask.projectId, '');
+assert.equal(internalTask.project, 'Вне активных проектов');
+
+// Daily location answers office/site/remote/vacation, and site is linked to one active project.
+assert.deepEqual(normalizePresenceEntry({mode:'site',projectId:'csn'}), {mode:'site',projectId:'csn'});
+assert.deepEqual(normalizePresenceEntry({mode:'remote',projectId:'csn'}), {mode:'remote',projectId:''});
+assert.equal(presenceModeLabel('vacation'), 'В отпуске');
+
 // New overdue is current attention.
 let s2 = snap([row()], '2026-10-03T09:00:00', s1, [s1]);
 assert.equal(s2.tasks[0].overdue, true);
@@ -135,5 +176,5 @@ assert.ok(missingIdQuality.errors.some(x=>x.includes('ID')));
 const q = validateRows([row()], headers, { rawCount: 10 });
 assert.equal(q.requiresConfirmation, true);
 
-console.log('PASS: daily events, debt separation, control lifecycle, project identity, quality gate');
+console.log('PASS: fixed ITO roster/projects, daily location, events, debt separation, control lifecycle, quality gate');
 `, Object.assign(context, { __assert: assert }));
