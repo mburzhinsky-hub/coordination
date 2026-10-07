@@ -121,6 +121,10 @@ function bindUi() {
     event.target.value = '';
     if (file) await handleUpload(file);
   });
+  const taskDetailClose = document.getElementById('taskDetailClose');
+  if (taskDetailClose) taskDetailClose.addEventListener('click', () => document.getElementById('taskDialog')?.close());
+  const taskDialog = document.getElementById('taskDialog');
+  if (taskDialog) taskDialog.addEventListener('click', event => { if (event.target === taskDialog) taskDialog.close(); });
   const close = document.getElementById('presenceClose');
   if (close) close.addEventListener('click', () => document.getElementById('presenceDialog')?.close());
   const skip = document.getElementById('presenceSkip');
@@ -146,6 +150,11 @@ function bindUi() {
     }
   });
   document.getElementById('viewRoot')?.addEventListener('click', async event => {
+    const taskLink = event.target.closest('[data-task-id]');
+    if (taskLink) {
+      openTaskDetail(taskLink.dataset.taskId);
+      return;
+    }
     const editPresence = event.target.closest('[data-edit-presence]');
     if (editPresence && state.currentSnapshot) {
       await preparePresenceEditor(state.currentSnapshot, true);
