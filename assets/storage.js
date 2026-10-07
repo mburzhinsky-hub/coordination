@@ -160,6 +160,10 @@ function hydrateTask(task) {
   const dateFields = ['deadline','actualStart','plannedStart','plannedEnd','created','changed','closed'];
   const next = {...task};
   dateFields.forEach(field => { next[field] = next[field] ? new Date(next[field]) : null; });
+  const resolvedProject = resolveItoProject(next.projectRaw, next.parentTitle, next.projectFullName, next.project);
+  next.projectId = resolvedProject?.id || '';
+  next.project = resolvedProject?.name || 'Вне активных проектов';
+  next.projectFullName = resolvedProject?.fullName || next.projectFullName || next.projectRaw || next.parentTitle || 'Вне активных проектов';
   return next;
 }
 
