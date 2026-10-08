@@ -183,15 +183,17 @@ function ageChartHtml(b) {
   const chart = buildAgeChart(b.snapshot);
   if (!chart.total) return '';
   const narrow = typeof window !== 'undefined' && window.matchMedia?.('(max-width: 700px)').matches;
-  const W = narrow ? 380 : 560, padL = narrow ? 62 : 74, padR = 22, laneH = narrow ? 62 : 74, top = 34, axisH = 34;
+  const W = narrow ? 380 : 560, padL = narrow ? 70 : 92, padR = 14, laneH = narrow ? 62 : 72, top = 40, axisH = 44;
   const H = top + laneH * chart.lanes.length + axisH;
   const R = narrow ? 5.2 : 5.8;
-  const x0 = padL + 12;
+  const x0 = padL + 10;
   const x = age => x0 + Math.min(1, age / chart.max) * (W - x0 - padR);
   const ticks = [0, 14, 30, 60, 90, 120, 150, 180].filter(v => v <= chart.max && (v === 0 || x(v) - x(0) > 26));
+  const bodyH = laneH * chart.lanes.length;
+  const labels = { acc: 'Ждут приёмки', debt: 'Старый долг', live: 'В работе' };
   let k = 0;
   const lanes = chart.lanes.map((lane, li) => {
-    const cy = top + laneH * li + laneH / 2 + 4;
+    const cy = top + laneH * li + laneH / 2;
     const placed = [];
     const dots = [...lane.dots].sort((a, b) => a.age - b.age).map(d => {
       const px = x(d.age), step = R * 2 + 1.4;
@@ -199,21 +201,26 @@ function ageChartHtml(b) {
       for (let n = 0; n < 9; n++) {
         const off = n === 0 ? 0 : (n % 2 ? 1 : -1) * Math.ceil(n / 2) * step;
         if (Math.abs(off) > laneH / 2 - R) continue;
-        if (!placed.some(p => Math.hypot(p.x - px, p.y - off) < step - 0.2)) { py = off; break; }
         py = off;
+        if (!placed.some(p => Math.hypot(p.x - px, p.y - off) < step - 0.2)) break;
       }
       placed.push({ x: px, y: py });
-      const old = lane.id === 'acc' ? d.age >= CONTROL_RED_DAYS : d.age >= 90;
-      return `<circle class="age-dot lane-${lane.id} ${old ? 'is-old' : ''}" style="--k:${k++}" cx="${px.toFixed(1)}" cy="${(cy + py).toFixed(1)}" r="${R}" tabindex="0" role="button" data-action="task" data-id="${escapeAttr(d.id)}" aria-label="${escapeAttr(`${d.title}, ${shortDays(d.age)}`)}"><title>${escapeHtml(`${shortLabel(d.title, 60)} · ${shortDays(d.age)}`)}</title></circle>`;
+      return `<circle class="age-dot lane-${lane.id}" style="--k:${k++}" cx="${px.toFixed(1)}" cy="${(cy + py).toFixed(1)}" r="${R}" tabindex="0" role="button" data-action="task" data-id="${escapeAttr(d.id)}" aria-label="${escapeAttr(`${d.title}, ${shortDays(d.age)}`)}"><title>${escapeHtml(`${shortLabel(d.title, 60)} · ${shortDays(d.age)} без движения`)}</title></circle>`;
     }).join('');
-    return `<g class="age-lane"><line class="age-rule" x1="0" x2="${W}" y1="${top + laneH * li + laneH}" y2="${top + laneH * li + laneH}"/><text class="age-lane-label" x="0" y="${cy - 3}">${escapeHtml(lane.label)}</text><text class="age-lane-count" x="0" y="${cy + 13}">${lane.dots.length} ${pluralRu(lane.dots.length, 'задача', 'задачи', 'задач')}</text>${dots}</g>`;
+    return `<g class="age-lane"><line class="age-rule" x1="0" x2="${W}" y1="${top + laneH * (li + 1)}" y2="${top + laneH * (li + 1)}"/><text class="age-lane-label" x="0" y="${cy - 2}">${labels[lane.id] || escapeHtml(lane.label)}</text><text class="age-lane-count" x="0" y="${cy + 14}">${lane.dots.length} ${pluralRu(lane.dots.length, 'задача', 'задачи', 'задач')}</text>${dots}</g>`;
   }).join('');
-  const marks = [[CONTROL_OLD_DAYS, narrow ? '14 дн.' : 'приёмка встала'], [CONTROL_RED_DAYS, narrow ? '60 дн.' : 'красная зона']].filter(([v]) => v < chart.max);
-  const guides = marks.map(([v, label]) => `<g class="age-guide"><line x1="${x(v).toFixed(1)}" x2="${x(v).toFixed(1)}" y1="${top - 6}" y2="${top + laneH * chart.lanes.length}"/><text x="${(x(v) + 5).toFixed(1)}" y="${top - 12}">${escapeHtml(label)}</text></g>`).join('');
-  const axis = ticks.map(v => `<text class="age-tick" x="${x(v).toFixed(1)}" y="${H - 8}" text-anchor="${v === 0 ? 'start' : 'middle'}">${v}</text>`).join('');
-  return `<figure class="age-chart" aria-label="Возраст открытых задач">
-    <figcaption><b>Сколько дней задачи стоят без движения</b><span>Одна точка — одна задача. Нажмите на точку, чтобы открыть её.</span></figcaption>
-    <svg viewBox="0 0 ${W} ${H}" role="group" aria-label="Диаграмма возраста задач">${guides}${lanes}${axis}</svg>
+  const xa = x(CONTROL_OLD_DAYS), xb = x(CONTROL_RED_DAYS), xe = W - padR;
+  const zones = [
+    { from: xa, to: xb, cls: 'zone-mid', text: narrow ? '2 нед. – 2 мес.' : 'от 2 недель до 2 месяцев' },
+    { from: xb, to: xe, cls: 'zone-old', text: narrow ? 'больше 2 мес.' : 'больше 2 месяцев' }
+  ].filter(z => z.to > z.from);
+  const zoneSvg = zones.map(z => `<rect class="age-zone ${z.cls}" x="${z.from.toFixed(1)}" y="${top}" width="${(z.to - z.from).toFixed(1)}" height="${bodyH}"/>${z.to - z.from > 70 ? `<text class="age-zone-label ${z.cls}" x="${((z.from + z.to) / 2).toFixed(1)}" y="${top - 12}" text-anchor="middle">${z.text}</text>` : ''}`).join('');
+  const axis = ticks.map(v => `<text class="age-tick" x="${x(v).toFixed(1)}" y="${top + bodyH + 18}" text-anchor="middle">${v}</text>`).join('');
+  const oldest = chart.lanes.flatMap(l => l.dots.map(d => ({ ...d, lane: l.id }))).sort((a, c) => c.age - a.age)[0];
+  return `<figure class="age-chart" aria-label="Сколько дней открытые задачи без движения">
+    <figcaption><b>Как давно задачи стоят без движения</b><span>Одна точка — одна задача. Чем правее, тем дольше в ней ничего не менялось. Нажмите на точку, чтобы открыть её.</span></figcaption>
+    <svg viewBox="0 0 ${W} ${H}" role="group" aria-label="Диаграмма: задачи по дням без движения">${zoneSvg}${lanes}${axis}<text class="age-axis-title" x="${xe}" y="${H - 6}" text-anchor="end">дней без движения</text></svg>
+    ${oldest ? `<p class="age-note">Самая давняя: <button type="button" data-action="task" data-id="${escapeAttr(oldest.id)}">${escapeHtml(shortLabel(oldest.title, 54))}</button>, ${daysWord(oldest.age)}.</p>` : ''}
   </figure>`;
 }
 
@@ -243,6 +250,7 @@ function viewToday(b) {
       <div class="hero-main">
         <div class="eyebrow">${weekdayCap(asOf)}, ${dayMonth(asOf)} · срез ${clockTime(asOf)}</div>
         <h1 class="hero-title" data-reveal data-glitch>${headlineHtml(b.headline)}</h1>
+        <p class="hero-gloss"><b>Приёмка</b> — исполнитель сдал работу и ждёт, пока постановщик её проверит. <b>Долг</b> — задача давно просрочена и не двигается.</p>
         <p class="hero-note">${s ? `Динамика — к срезу ${dayMonthShort(s.since)}${s.hasGap ? ` (${daysWord(s.gapDays)} назад)` : ''}.` : 'Динамика появится после второй выгрузки.'}</p>
       </div>
       ${ageChartHtml(b)}

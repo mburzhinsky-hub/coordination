@@ -148,7 +148,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 html[data-fx="on"] .hero-dots { opacity: .55; }
 .hero-title { margin-top: 12px; font-family: var(--display); font-size: clamp(32px, 3.5vw, 54px); line-height: 1.08; letter-spacing: -.035em; font-weight: 600; max-width: 18em; text-wrap: balance; color: #fff; }
 .hero .em-red { color: #ff6b5e; } .hero .em-amber { color: #ffc94d; }
-.hero-note { margin-top: 14px; font-size: 13px; color: #9a988c; }
+.hero-note { margin-top: 12px; font-size: 13px; color: #9a988c; }
 .intro { display: flex; align-items: center; gap: 18px; padding: 16px 20px; border-radius: 18px; background: #fff; border: 1px dashed #cfcdc3; }
 .intro-dots { display: none; }
 .intro-body { flex: 1; }
@@ -729,13 +729,18 @@ html[data-fx="on"] .tv-ticker-track { animation: marquee 50s linear infinite; }
 .age-rule { stroke: rgba(255, 255, 255, .1); stroke-width: 1; }
 .age-lane-label { fill: #e9e7dd; font-size: 13px; font-weight: 600; }
 .age-lane-count { fill: #8d8b80; font-size: 11.5px; font-variant-numeric: tabular-nums; }
-.age-tick, .age-axis-title { fill: #8d8b80; font-size: 11.5px; font-variant-numeric: tabular-nums; }
-.age-guide line { stroke: rgba(255, 255, 255, .28); stroke-width: 1; stroke-dasharray: 3 4; }
-.age-guide text { fill: #bdbbb0; font-size: 11.5px; }
+.age-tick, .age-axis-title { fill: #a8a699; font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .age-dot { cursor: pointer; stroke: #14140f; stroke-width: 1.5; transition: r .15s, filter .15s; }
-.age-dot.lane-acc { fill: #8aa4ff; } .age-dot.lane-acc.is-old { fill: #ff6b5e; }
-.age-dot.lane-debt { fill: #ff8f84; } .age-dot.lane-debt.is-old { fill: #ff5a4e; }
+.age-dot.lane-acc { fill: #8aa4ff; }
+.age-dot.lane-debt { fill: #ff7a6e; }
 .age-dot.lane-live { fill: #f4f3ee; }
+.age-zone.zone-mid { fill: rgba(255, 201, 77, .07); } .age-zone.zone-old { fill: rgba(255, 90, 78, .10); }
+.age-zone-label { font-size: 11.5px; font-weight: 600; } .age-zone-label.zone-mid { fill: #ffc94d; } .age-zone-label.zone-old { fill: #ff8f84; }
+.age-note { margin: 2px 0 12px; font-size: 12.5px; color: #9a988c; }
+.age-note button { color: #f4f3ee; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(255,255,255,.35); text-align: left; }
+.age-note button:hover { text-decoration-color: #fff; }
+.hero-gloss { margin-top: 16px; max-width: 34em; font-size: 14px; line-height: 1.5; color: #c9c7bb; }
+.hero-gloss b { color: #fff; font-weight: 650; }
 .age-dot:hover, .age-dot:focus-visible { r: 8; filter: drop-shadow(0 0 7px currentColor); outline: none; stroke: #fff; }
 .age-dot.lane-acc:hover { filter: drop-shadow(0 0 8px #8aa4ff); } .age-dot.lane-debt:hover { filter: drop-shadow(0 0 8px #ff6b5e); } .age-dot.lane-live:hover { filter: drop-shadow(0 0 8px #fff); }
 @keyframes dotin { from { opacity: 0; transform: scale(.2); } to { opacity: 1; transform: scale(1); } }
