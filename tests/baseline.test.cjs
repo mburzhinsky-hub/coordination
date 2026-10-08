@@ -13,7 +13,7 @@ const context = vm.createContext({
   Set,
   Map
 });
-for (const file of ['assets/app.js','assets/ui.js','assets/upload.js','assets/normalize.js','assets/model.js','assets/storage.js','assets/helpers.js']) vm.runInContext(readFileSync(file,'utf8'), context);
+for (const file of ['assets/briefing.js','assets/kit.js','assets/fx.js','assets/views.js','assets/views2.js','assets/palette.js','assets/app.js','assets/ui.js','assets/upload.js','assets/normalize.js','assets/model.js','assets/storage.js','assets/helpers.js']) vm.runInContext(readFileSync(file,'utf8'), context);
 
 vm.runInContext(`
 const assert = globalThis.__assert;
@@ -65,9 +65,9 @@ assert.equal(resolveItoProject('P211-24-09 Музей ЦСН (ФСБ) Балаш
 assert.equal(resolveItoProject('Лужники БСА')?.id, 'luzhniki');
 
 const described = normalizeTask(row({
-  'Описание':'Первая строка\n\nВторая строка'
+  'Описание':'Первая строка\\n\\nВторая строка'
 }),0,new Date('2026-10-06T09:00:00'),null);
-assert.equal(described.description, 'Первая строка\n\nВторая строка');
+assert.equal(described.description, 'Первая строка\\n\\nВторая строка');
 
 // Active project registry is fixed to eight projects.
 assert.equal(ITO_PROJECTS.length, 9);

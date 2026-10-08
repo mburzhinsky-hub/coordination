@@ -1,280 +1,165 @@
 'use strict';
-function renderOverview(snapshot) {
-  const presence = state.presence || { people: {} };
-  const people = summarizePeopleV2(snapshot.tasks, presence, ITO_ROSTER);
-  const projects = summarizeProjectsV2(snapshot.tasks, snapshot);
-  const attention = buildAttentionItems(snapshot);
-  const operational = summarizeOperationalWork(snapshot.tasks);
-  const quality = summarizeDataQuality(snapshot, presence);
-  const changes = summarizeChanges(snapshot);
-  const possibleOverload = summarizePossibleOverload(snapshot.tasks, people);
-  const overloadMap = new Map(possibleOverload.map(item => [item.name, item]));
-  people.forEach(person => { person.possibleOverload = overloadMap.get(person.name) || null; });
-  const debtCount = snapshot.tasks.filter(t => t.debt && t.debt !== 'none').length;
-  const waitingControlCount = snapshot.tasks.filter(t => !t.isCompleted && t.isWaitingControl).length;
-  const firstSnapshot = state.snapshots.length < 2;
-  document.getElementById('viewRoot').innerHTML = `
-    ${renderTodayStrip(attention.length, waitingControlCount, debtCount, changes.counts.completed, firstSnapshot)}
-    <div class="dashboard-grid management-grid overview-signal-grid">
-      ${renderChangesPanel(changes, firstSnapshot)}
-      ${renderPossibleOverloadPanel(possibleOverload)}
-    </div>
-    <div class="dashboard-grid management-grid">
-      ${renderAttentionPanel(attention.slice(0, 5), debtCount)}
-      ${renderPresenceSummary(people, presence)}
-    </div>
-    ${renderProjectsPanel(projects, snapshot)}
-    ${renderTeamPanel(people)}
-    <div class="dashboard-grid management-grid">
-      ${renderOperationalPanel(operational)}
-      ${renderQualityPanel(quality)}
-    </div>`;
+/* Shell: loading/empty/error states, navigation badges, freshness chip, task sheet, toasts, glossary popovers. */
+
+function viewRootEl() { return document.getElementById('viewRoot'); }
+
+function renderLoading(text) {
+  const root = viewRootEl();
+  if (root) root.innerHTML = `<div class="loading-state" role="status">${dotLoader(7)}<p>${escapeHtml(text || 'Загрузка…')}</p></div>`;
 }
 
-function renderTodayStrip(attention, control, debt, completed, firstSnapshot) {
-  return `<section class="today-strip">
-    <div class="today-label">Сегодня</div>
-    <div class="today-metric"><strong>${attention}</strong><span>свежих сигналов</span></div>
-    <div class="today-metric"><strong>${control}</strong><span>ждут контроля</span></div>
-    <div class="today-metric"><strong>${debt}</strong><span>старый долг</span></div>
-    <div class="today-metric"><strong>${firstSnapshot ? '—' : completed}</strong><span>${firstSnapshot ? 'первый срез' : 'закрыто со вчера'}</span></div>
-  </section>`;
+function renderEmpty() {
+  const root = viewRootEl();
+  if (!root) return;
+  root.innerHTML = `<div class="onboard">${logoMark(72)}
+    <h1>Загрузите первую выгрузку</h1>
+    <p>Дашборд читает ежедневную выгрузку задач из Bitrix24 в Excel (.xls). Перетащите файл в это окно или нажмите кнопку.</p>
+    <label class="btn btn-dark" for="uploadInput">${icon('upload')}Выбрать файл</label>
+    <ol class="onboard-steps"><li><b>1</b>Выгрузите задачи из Bitrix в Excel.</li><li><b>2</b>Загрузите файл сюда. Через день загрузите следующий.</li><li><b>3</b>Со второй выгрузки появятся «что изменилось» и динамика.</li></ol></div>`;
+  const updated = document.getElementById('freshChip');
+  if (updated) { updated.className = 'chip chip-muted'; updated.textContent = 'Нет данных'; }
 }
 
-function renderChangesPanel(changes, firstSnapshot) {
-  if (firstSnapshot) return `<section class="panel change-panel"><div class="panel-head"><h2 class="panel-title">Что изменилось</h2></div><div class="attention-empty">Это первый срез. Изменения появятся после следующей ежедневной выгрузки.</div></section>`;
-  const c = changes.counts;
-  return `<section class="panel change-panel">
-    <div class="panel-head"><h2 class="panel-title">Что изменилось</h2></div>
-    <div class="change-summary">
-      <span><strong>${c.completed}</strong> закрыто</span><span><strong>${c.added}</strong> новых</span><span><strong>${c.newOverdue}</strong> новых просрочек</span><span><strong>${c.deadlineMoved}</strong> изменений срока</span><span><strong>${c.control}</strong> ушли на контроль</span>
-    </div>
-    <div class="change-list">${changes.meaningful.map(event => `<button class="change-row" type="button" data-task-id="${escapeAttr(event.taskId)}"><span class="signal-dot ${event.severity === 'critical' ? 'critical' : event.severity === 'watch' ? 'watch' : 'none'}"></span><span class="change-project">${escapeHtml(event.project || 'Операционная работа')}</span><span class="change-text"><strong>${escapeHtml(event.taskTitle || 'Задача')}</strong><small>${escapeHtml(event.label)}${event.detail ? ' · '+escapeHtml(event.detail) : ''}</small></span></button>`).join('') || '<div class="attention-empty">Значимых изменений нет.</div>'}</div>
-  </section>`;
-}
-
-
-function renderPossibleOverloadPanel(items) {
-  return `<section class="panel overload-panel">
-    <div class="panel-head"><div><h2 class="panel-title">Возможный перегруз</h2><p class="panel-note">Эвристика: активные задачи, параллельные проекты, свежие сигналы и близкие сроки.</p></div><strong class="overload-count">${items.length}</strong></div>
-    ${items.length ? `<div class="overload-list">${items.slice(0,4).map(item => `<button class="overload-row" type="button" data-person="${escapeAttr(item.name)}"><span class="avatar">${escapeHtml(initials(item.name))}</span><span class="overload-main"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.reasons.join(' · '))}</small></span><span class="overload-tag ${item.level}">проверить</span></button>`).join('')}</div>` : '<div class="attention-empty">Явных признаков перегруза сейчас нет.</div>'}
-  </section>`;
-}
-
-
-function kpiCard(value, label, icon, kind) {
-  return `<article class="kpi-card" data-kind="${escapeAttr(kind)}"><div><div class="kpi-value">${escapeHtml(value)}</div><div class="kpi-label">${escapeHtml(label)}</div></div><div class="kpi-icon">${escapeHtml(icon)}</div></article>`;
-}
-
-function renderTeamPanel(people) {
-  return `<section class="panel management-panel">
-    <div class="panel-head"><h2 class="panel-title">Команда</h2><button class="panel-link" data-open-view="people">все →</button></div>
-    <div class="table-scroll"><table class="data-table team-table management-table"><thead><tr><th>Сотрудник</th><th>Где</th><th>Текущий фокус</th><th>Активно</th><th>Контроль</th><th>Сигналы</th><th>Долг</th><th>Нагрузка</th></tr></thead><tbody>
-      ${people.map(person => `<tr class="clickable-row" data-person="${escapeAttr(person.name)}">
-        <td><div class="person-cell"><span class="avatar">${escapeHtml(initials(person.name))}</span><span class="person-name">${escapeHtml(person.name)}</span></div></td>
-        <td>${escapeHtml(person.location)}</td>
-        <td>${person.focusTaskId ? `<button class="task-link task-link-compact" type="button" data-task-id="${escapeAttr(person.focusTaskId)}" title="${escapeAttr(person.focus)}">${escapeHtml(person.focus)}</button>` : '—'}</td>
-        <td>${person.activeCount}</td><td>${person.waitingControlCount}</td><td>${person.freshAttentionCount}</td><td>${person.debtCount}</td><td>${person.possibleOverload ? `<span class="overload-inline ${person.possibleOverload.level}">проверить</span>` : '—'}</td>
-      </tr>`).join('')}
-    </tbody></table></div>
-  </section>`;
-}
-
-function renderAttentionPanel(items, debtCount) {
-  return `<section class="panel">
-    <div class="panel-head"><h2 class="panel-title">Требует внимания</h2><button class="panel-link" data-open-view="attention">все →</button></div>
-    ${items.length ? `<div class="attention-list">${items.map(item => `<button class="attention-row attention-row-button" type="button" data-task-id="${escapeAttr(item.taskId)}"><span class="signal-dot ${item.severity}"></span><div class="attention-main"><div class="attention-project">${escapeHtml(item.project)}</div><div class="attention-task-title">${escapeHtml(item.detail)}</div><div class="attention-reason">${escapeHtml(item.label)}</div></div><div class="attention-age ${item.severity}">${escapeHtml(item.when)}</div></button>`).join('')}</div>` : `<div class="attention-empty">Новых оперативных сигналов нет.</div>`}
-    <div class="debt-link"><span>Старый долг</span><span>${debtCount}</span></div>
-  </section>`;
-}
-
-function renderProjectsPanel(projects, snapshot = state.currentSnapshot) {
-  return `<section class="panel management-panel">
-    <div class="panel-head"><h2 class="panel-title">Проекты</h2><button class="panel-link" data-open-view="projects">все →</button></div>
-    <div class="table-scroll"><table class="data-table management-table"><thead><tr><th>Проект</th><th>Активно</th><th>Контроль</th><th>Сигналы</th><th>Долг</th><th>Ближайший срок</th><th>Последнее движение</th></tr></thead><tbody>
-      ${projects.map(p => `<tr class="clickable-row" data-project-id="${escapeAttr(p.id)}"><td><strong>${escapeHtml(p.name)}</strong><div class="secondary">${escapeHtml(p.type)}</div></td><td>${p.activeCount}</td><td>${p.waitingControlCount}</td><td><span class="project-risk"><i class="signal-dot ${p.risk === 'high' ? 'critical' : p.risk === 'medium' ? 'watch' : 'none'}"></i>${p.attentionCount}</span></td><td>${p.debtCount}</td><td>${escapeHtml(p.nextDeadline ? formatDateShort(p.nextDeadline) : '—')}</td><td>${escapeHtml(relativeMovement(p.lastMovementAt, snapshot.asOf))}</td></tr>`).join('')}
-    </tbody></table></div>
-  </section>`;
-}
-
-function renderPresenceSummary(people, presence) {
-  const groups = { site: [], office: [], remote: [], vacation: [], '': [] };
-  people.forEach(person => (groups[person.presenceMode] || groups['']).push(person));
-  const specifiedCount = people.length - groups[''].length;
-  return `<section class="panel">
-    <div class="panel-head"><div><h2 class="panel-title">Кто где</h2><p class="panel-note">Отмечено ${specifiedCount} из ${people.length}</p></div><button class="panel-link" data-edit-presence="1">изменить →</button></div>
-    <div class="location-summary">
-      ${groups.site.map(p => `<div class="location-site"><strong>${escapeHtml(p.name)}</strong><span>${escapeHtml(p.location)}</span></div>`).join('')}
-      <div class="location-counts">
-        <span class="location-count-site">На объектах <strong>${groups.site.length}</strong></span>
-        <span>В офисе <strong>${groups.office.length}</strong></span>
-        <span>Удалённо <strong>${groups.remote.length}</strong></span>
-        <span>В отпуске <strong>${groups.vacation.length}</strong></span>
-        <span>Не указано <strong>${groups[''].length}</strong></span>
-      </div>
-    </div>
-  </section>`;
-}
-
-function renderOperationalPanel(data) {
-  return `<section class="panel"><div class="panel-head"><h2 class="panel-title">Операционная работа</h2></div>
-    <div class="operational-stats"><span><strong>${data.totalCount}</strong> текущих</span><span><strong>${data.activeCount}</strong> активно</span><span><strong>${data.waitingControlCount}</strong> контроль</span><span><strong>${data.attentionCount}</strong> сигналы</span><span><strong>${data.debtCount}</strong> долг</span></div>
-    <div class="operational-buckets">${data.buckets.map(x=>`<span>${escapeHtml(x.name)} · ${x.count}</span>`).join('')}</div>
-  </section>`;
-}
-
-function renderQualityPanel(data) {
-  return `<section class="panel"><div class="panel-head"><h2 class="panel-title">Качество данных</h2></div>
-    <div class="quality-list"><div><strong>${data.noDeadlineCount}</strong><span>задач без срока</span></div><div><strong>${data.outsideProjectsCount}</strong><span>вне основных проектов</span></div><div><strong>${data.projectConflictCount}</strong><span>конфликтов проекта</span></div><div><strong>${data.missingPresenceCount}</strong><span>не заполнено «Кто где»</span></div></div>
-  </section>`;
-}
-
-function renderPresencePanel(people, projects, presence) {
-  const rows = people.map(person => {
-    const entry = presenceForPerson(presence, person.name);
-    const project = entry.mode === 'site' ? itoProjectById(entry.projectId) : null;
-    return { name: person.name, mode: entry.mode, label: presenceModeLabel(entry.mode), project: project?.name || '' };
-  });
-  const order = { site: 0, office: 1, remote: 2, vacation: 3, '': 4 };
-  rows.sort((a,b) => (order[a.mode] ?? 4) - (order[b.mode] ?? 4) || a.name.localeCompare(b.name, 'ru'));
-  return `<section class="panel">
-    <div class="panel-head"><h2 class="panel-title">Кто где</h2><button class="panel-link" data-edit-presence="1">изменить →</button></div>
-    <div class="where-list">${rows.map(row => `<div class="where-row"><div class="person-cell"><span class="avatar">${escapeHtml(initials(row.name))}</span><span class="person-name">${escapeHtml(row.name)}</span></div><span class="where-status ${escapeAttr(row.mode || 'unknown')}">${escapeHtml(row.label)}</span><span class="where-project">${row.project ? escapeHtml(row.project) : '—'}</span></div>`).join('')}</div>
-  </section>`;
-}
-
-function statusPill(status) {
-  const labels = { overload: 'перегруз', risk: 'риск', normal: 'норма', reserve: 'есть резерв' };
-  return `<span class="status-pill ${escapeAttr(status)}"><i class="status-dot"></i>${escapeHtml(labels[status] || status)}</span>`;
-}
-
-function projectRisk(risk) {
-  const labels = { high: 'Высокий', medium: 'Средний', none: 'Нет' };
-  const cls = risk === 'high' ? 'critical' : risk === 'medium' ? 'watch' : 'none';
-  return `<span class="project-risk"><i class="signal-dot ${cls}"></i>${escapeHtml(labels[risk] || 'Нет')}</span>`;
-}
-
-function renderPeopleView(snapshot) {
-  const people = summarizePeopleV2(snapshot.tasks, state.presence, ITO_ROSTER);
-  document.getElementById('viewRoot').innerHTML = `<section class="view-card">
-    <div class="view-head"><div><h2>Люди</h2><p>Фактические состояния без синтетической оценки «перегруз / резерв».</p></div></div>
-    ${renderTeamPanel(people)}
-  </section>`;
-}
-
-function renderProjectsView(snapshot) {
-  const projects = summarizeProjectsV2(snapshot.tasks, snapshot);
-  document.getElementById('viewRoot').innerHTML = `<section class="view-card">
-    <div class="view-head"><div><h2>Проекты</h2><p>Девять основных проектов: движение, контроль, свежие сигналы и долг.</p></div></div>
-    ${renderProjectsPanel(projects, snapshot)}
-  </section>`;
-}
-
-function renderAttentionView(snapshot) {
-  const items = buildAttentionItems(snapshot);
-  const debt = snapshot.tasks.filter(t => t.debt && t.debt !== 'none').sort((a,b) => b.overdueDays - a.overdueDays);
-  document.getElementById('viewRoot').innerHTML = `<section class="view-card">
-    <div class="view-head"><div><h2>Внимание</h2><p>Fresh attention отделён от накопленного долга.</p></div><div class="summary-strip"><span class="summary-chip">сейчас ${items.length}</span><span class="summary-chip">старый долг ${debt.length}</span></div></div>
-    <div class="attention-full-list">${items.map(item => `<button class="attention-card task-card-button" type="button" data-task-id="${escapeAttr(item.taskId)}"><i class="signal-dot ${item.severity}"></i><div><div class="attention-project">${escapeHtml(item.project)}</div><h3>${escapeHtml(item.detail)}</h3><p>${escapeHtml(item.label)}${item.owner ? ` · Мяч: ${escapeHtml(item.owner)}` : ''}</p></div><div class="attention-meta">${escapeHtml(item.when)}</div></button>`).join('') || '<div class="attention-empty">Оперативных сигналов нет.</div>'}</div>
-    <details class="debt-section"><summary>Старый долг · ${debt.length}</summary>${debt.length ? `<table class="data-table detail-table"><thead><tr><th>Задача</th><th>Проект</th><th>Ответственный</th><th>Просрочка</th><th>Без движения</th><th>Класс</th></tr></thead><tbody>${debt.map(t => `<tr><td><button class="task-link task-link-table" type="button" data-task-id="${escapeAttr(t.id)}" title="${escapeAttr(t.title)}">${escapeHtml(t.title)}</button></td><td>${escapeHtml(t.project)}</td><td>${escapeHtml(t.responsible)}</td><td>${t.overdueDays ? `${t.overdueDays} дн.` : '—'}</td><td>${t.inactivityDays} дн.</td><td>${escapeHtml(t.debt)}</td></tr>`).join('')}</tbody></table>` : ''}</details>
-  </section>`;
-}
-
-function renderPlanView(snapshot) {
-  const tasks = snapshot.tasks.filter(t => !t.isCompleted && t.deadline && t.debt === 'none').sort((a,b) => a.deadline - b.deadline).slice(0, 40);
-  const maxDays = Math.max(1, ...tasks.map(t => Math.max(0, diffDays(t.deadline, new Date(snapshot.asOf)))));
-  document.getElementById('viewRoot').innerHTML = `<section class="view-card">
-    <div class="view-head"><div><h2>План</h2><p>Ближайшие сроки без legacy-задач.</p></div><div class="summary-strip"><span class="summary-chip">на шкале ${tasks.length}</span></div></div>
-    <div class="plan-list">${tasks.map(t => { const days = diffDays(t.deadline, new Date(snapshot.asOf)); const width = Math.max(5, Math.min(100, ((Math.max(0, days) + 1) / (maxDays + 1)) * 100)); return `<div class="plan-row ${t.attention === 'critical' ? 'critical' : ''}"><div class="plan-date">${escapeHtml(formatDateShort(t.deadline))}</div><div>${escapeHtml(shortLabel(t.project, 24))}</div><div><button class="task-link task-link-plan" type="button" data-task-id="${escapeAttr(t.id)}" title="${escapeAttr(t.title)}">${escapeHtml(t.title)}</button><div class="plan-bar"><span style="width:${width}%"></span></div></div><div>${escapeHtml(t.responsible)}</div></div>`; }).join('') || '<div class="attention-empty">Нет задач со сроками.</div>'}</div>
-  </section>`;
+function renderError(message) {
+  const root = viewRootEl();
+  if (root) root.innerHTML = `<div class="error-state" role="alert"><h2>Не удалось обработать данные</h2><p>${escapeHtml(message)}</p><label class="btn btn-ghost" for="uploadInput">${icon('upload')}Загрузить другой файл</label></div>`;
 }
 
 function renderQuality(quality) {
   const banner = document.getElementById('qualityBanner');
+  if (!banner) return;
   const warnings = quality?.warnings || [];
   banner.hidden = !warnings.length;
-  banner.textContent = warnings.join(' · ');
+  banner.innerHTML = warnings.length ? `${sevIcon('watch', 18)}<span>${warnings.map(escapeHtml).join(' · ')}</span>` : '';
 }
 
-function renderLoading(text) { document.getElementById('viewRoot').innerHTML = `<div class="loading-state">${escapeHtml(text || 'Загрузка…')}</div>`; }
-function renderEmpty() { document.getElementById('viewRoot').innerHTML = `<div class="loading-state">Нет данных. Нажмите «Обновить» и выберите выгрузку задач из Bitrix.</div>`; document.getElementById('updatedAt').textContent = 'Нет данных'; }
-function renderError(message) { document.getElementById('viewRoot').innerHTML = `<div class="error-state"><strong>Не удалось обработать данные.</strong><div style="margin-top:8px">${escapeHtml(message)}</div></div>`; }
+/** Navigation badges, freshness chip, history banner, document title. */
+function renderShell(b) {
+  const route = state.route.name;
+  const meta = ROUTES[route] || ROUTES.today;
+  document.title = `${meta.title} — ИТО`;
+  document.querySelectorAll('[data-route]').forEach(link => {
+    const on = link.dataset.route === route || (route === 'tv' && link.dataset.route === 'today');
+    link.classList.toggle('is-active', on);
+    if (on) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current');
+  });
+  const inbox = buildInbox(b.snapshot, state.triage);
+  const audit = buildDebtAudit(b.snapshot, state.triage);
+  setBadge('badgeInbox', inbox.items.length, 'red');
+  setBadge('badgeDebt', audit.remaining, 'ink');
+  setBadge('tabBadgeInbox', inbox.items.length, 'red');
 
-
-
-function renderProjectDetail(projectId) {
-  const def = itoProjectById(projectId);
-  const snapshot = state.currentSnapshot;
-  if (!def || !snapshot) return;
-  const rows = snapshot.tasks.filter(t => t.projectId === projectId && !t.isCompleted);
-  const summary = summarizeProjectsV2(snapshot.tasks, snapshot).find(p => p.id === projectId);
-  const active = rows.filter(t => t.loadRelevant);
-  const control = rows.filter(t => t.isWaitingControl);
-  const attention = rows.filter(t => t.attention === 'critical' || t.attention === 'watch');
-  const debt = rows.filter(t => t.debt !== 'none');
-  document.getElementById('viewRoot').innerHTML = `<section class="view-card"><div class="view-head"><div><button class="panel-link" data-open-view="projects">← проекты</button><h2>${escapeHtml(def.name)}</h2><p>${escapeHtml(def.type)} · ближайший срок ${escapeHtml(summary?.nextDeadline ? formatDateShort(summary.nextDeadline) : '—')} · последнее движение ${escapeHtml(relativeMovement(summary?.lastMovementAt, snapshot.asOf))}</p></div><div class="summary-strip"><span class="summary-chip">активно ${active.length}</span><span class="summary-chip">контроль ${control.length}</span><span class="summary-chip">сигналы ${attention.length}</span><span class="summary-chip">долг ${debt.length}</span></div></div>
-    ${renderTaskGroup('Требует внимания', attention)}
-    ${renderTaskGroup('Активные задачи', active)}
-    ${renderTaskGroup('Ждёт контроля', control)}
-    ${renderTaskGroup('Старый долг', debt)}
-  </section>`;
+  const chip = document.getElementById('freshChip');
+  if (chip) {
+    const fresh = b.freshness;
+    if (state.historyMode) {
+      chip.className = 'chip chip-blue';
+      chip.innerHTML = `<i class="dot"></i>Срез от ${escapeHtml(dayMonthShort(b.snapshot.asOf))} (история)`;
+      chip.title = 'Вы смотрите прошлый срез';
+    } else {
+      chip.className = `chip chip-${fresh.level === 'fresh' ? 'green' : fresh.level === 'aging' ? 'amber' : 'red'}`;
+      chip.innerHTML = `<i class="dot"></i>${escapeHtml(fresh.label)}`;
+      chip.title = fresh.hint || 'Срез свежий';
+    }
+  }
+  const stale = document.getElementById('freshBanner');
+  if (stale) {
+    const show = !state.historyMode && b.freshness.level === 'stale';
+    stale.hidden = !show;
+    stale.innerHTML = show ? `${sevIcon('critical', 22)}<div><b>Срез устарел на ${daysWord(b.freshness.days)}.</b> ${escapeHtml(b.freshness.hint.replace(/^Срез устарел на [^:]+: /, ''))}</div><label class="btn btn-dark btn-sm" for="uploadInput">${icon('upload')}Загрузить выгрузку</label>` : '';
+  }
+  const hist = document.getElementById('historyBanner');
+  if (hist) {
+    hist.hidden = !state.historyMode;
+    hist.innerHTML = state.historyMode ? `${icon('rewind')}<div><b>Вы смотрите срез ${escapeHtml(dayMonth(b.snapshot.asOf))}, ${clockTime(b.snapshot.asOf)}.</b> Кнопки решений отключены.</div><button class="btn btn-dark btn-sm" type="button" data-action="history-live">Вернуться к актуальному</button>` : '';
+  }
+  const rows = document.getElementById('railRows');
+  if (rows) {
+    const raw = b.snapshot.rawCount || 0;
+    const used = b.snapshot.tasks.length;
+    rows.textContent = `${raw} строк в файле · в расчёте ${used}`;
+    rows.title = `${Math.max(0, raw - used)} строк исключено: контейнеры проектов, отложенные и служебные ежедневные задачи.`;
+  }
+  const when = document.getElementById('railWhen');
+  if (when) when.textContent = `Срез ${dayMonthShort(b.snapshot.asOf)}, ${clockTime(b.snapshot.asOf)}`;
+  renderSyncStatus();
+  renderQuality(b.snapshot.quality);
 }
 
-function renderPersonDetail(personName) {
-  const snapshot = state.currentSnapshot;
-  if (!snapshot) return;
-  const person = summarizePeopleV2(snapshot.tasks, state.presence, ITO_ROSTER).find(p => p.name === personName);
-  if (!person) return;
-  const owned = snapshot.tasks.filter(t => canonicalItoName(t.responsible) === personName && !t.isCompleted);
-  const active = owned.filter(t => t.loadRelevant);
-  const control = owned.filter(t => t.isWaitingControl);
-  const attention = snapshot.tasks.filter(t => (t.attention === 'critical' || t.attention === 'watch') && (t.ballOwner?.people || []).some(p => canonicalItoName(p) === personName));
-  const debt = owned.filter(t => t.debt !== 'none');
-  document.getElementById('viewRoot').innerHTML = `<section class="view-card"><div class="view-head"><div><button class="panel-link" data-open-view="people">← люди</button><h2>${escapeHtml(personName)}</h2><p>${escapeHtml(person.location)}</p></div><div class="summary-strip"><span class="summary-chip">активно ${active.length}</span><span class="summary-chip">контроль ${control.length}</span><span class="summary-chip">сигналы ${attention.length}</span><span class="summary-chip">долг ${debt.length}</span></div></div>
-    ${renderTaskGroup('Активно сейчас', active)}
-    ${renderTaskGroup('Ждёт контроля', control)}
-    ${renderTaskGroup('Свежие сигналы', attention)}
-    ${renderTaskGroup('Старый долг', debt)}
-  </section>`;
+function setBadge(id, count, tone) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.hidden = !count;
+  el.textContent = count || '';
+  el.className = `badge badge-${tone}`;
 }
 
-function renderTaskGroup(title, rows) {
-  return `<section class="detail-group"><h3>${escapeHtml(title)}</h3>${rows.length ? rows.map(t=>`<button class="detail-task-row" type="button" data-task-id="${escapeAttr(t.id)}"><span>${escapeHtml(t.title)}</span><small>${escapeHtml(t.project)} · ${escapeHtml(t.responsible)}${t.deadline ? ' · '+formatDateShort(t.deadline) : ''}</small></button>`).join('') : '<div class="attention-empty">Нет задач.</div>'}</section>`;
+/* ---------- task sheet ---------- */
+
+function inboxItemFor(task) {
+  return buildInbox(state.currentSnapshot, state.triage).all.find(i => String(i.taskId) === String(task.id)) || null;
 }
 
-function openTaskDetail(taskId) {
+function renderTaskSheetBody(taskId) {
   const task = state.currentSnapshot?.tasks?.find(item => String(item.id) === String(taskId));
-  if (!task) return;
+  const body = document.getElementById('taskSheetBody');
+  if (!task || !body) return false;
+  const b = state.briefing || buildBriefing(state.currentSnapshot, state.snapshots, state.presence, new Date());
+  body.innerHTML = taskDetailHtml(task, b, { item: inboxItemFor(task) });
+  return true;
+}
+
+function openTaskSheet(taskId) {
   const dialog = document.getElementById('taskDialog');
   if (!dialog) return;
-  document.getElementById('taskDetailProject').textContent =
-    task.project && task.project !== 'Вне активных проектов' ? task.project : 'ЗАДАЧА';
-  document.getElementById('taskDetailTitle').textContent = task.title || 'Без названия';
-  const meta = [
-    task.responsible ? `Ответственный · ${task.responsible}` : '',
-    task.status ? `Статус · ${task.status}` : '',
-    task.deadline ? `Срок · ${formatDateTime(task.deadline)}` : 'Без срока',
-    task.id ? `ID · ${task.id}` : '',
-    task.changed ? `Изменена · ${formatDateTime(task.changed)}` : '',
-    task.inactivityDays ? `Без движения · ${task.inactivityDays} дн.` : '',
-    task.attention !== 'none' ? `Attention · ${task.attentionReason || task.attention}` : '',
-    task.debt !== 'none' ? `Debt · ${task.debt}` : '',
-    task.ballOwner?.people?.length ? `Мяч · ${task.ballOwner.people.join(', ')}` : '',
-    task.loadRelevant ? 'Класс · live' : ''
-  ].filter(Boolean);
-  document.getElementById('taskDetailMeta').innerHTML =
-    meta.map(value => `<span>${escapeHtml(value)}</span>`).join('');
-  const description = cleanMultilineText(task.description || '');
-  document.getElementById('taskDetailDescription').textContent =
-    description || 'Описание в выгрузке не заполнено.';
-  const parentWrap = document.getElementById('taskDetailParentWrap');
-  const parent = document.getElementById('taskDetailParent');
-  if (task.parentTitle) {
-    parent.textContent = task.parentTitle;
-    parentWrap.hidden = false;
-  } else {
-    parent.textContent = '';
-    parentWrap.hidden = true;
-  }
-  dialog.showModal();
+  if (!renderTaskSheetBody(taskId)) return;
+  state.ui.sheetTask = String(taskId);
+  if (!dialog.open) dialog.showModal();
+  dialog.querySelector('.sheet-body')?.scrollTo?.(0, 0);
+}
+
+function closeTaskSheet() {
+  const dialog = document.getElementById('taskDialog');
+  state.ui.sheetTask = '';
+  if (dialog?.open) dialog.close();
+}
+
+/* ---------- toasts and glossary popovers ---------- */
+
+let toastTimer = 0;
+function showToast(message, opts = {}) {
+  const root = document.getElementById('toastRoot');
+  if (!root) return;
+  clearTimeout(toastTimer);
+  root.innerHTML = `<div class="toast" role="status"><span>${escapeHtml(message)}</span>${opts.undoLabel ? `<button type="button" class="toast-undo" data-action="toast-undo">${escapeHtml(opts.undoLabel)}</button>` : ''}</div>`;
+  root.classList.add('is-on');
+  state.ui.toastUndo = opts.onUndo || null;
+  toastTimer = setTimeout(() => { root.classList.remove('is-on'); state.ui.toastUndo = null; }, opts.ms || 6000);
+}
+
+function hideTermPopover() { document.getElementById('termPop')?.remove(); }
+
+function showTermPopover(anchor, key) {
+  const term = GLOSSARY[key];
+  if (!term) return;
+  const already = document.getElementById('termPop');
+  hideTermPopover();
+  if (already && already.dataset.key === key) return;
+  const pop = document.createElement('div');
+  pop.id = 'termPop';
+  pop.className = 'termpop';
+  pop.dataset.key = key;
+  pop.setAttribute('role', 'tooltip');
+  pop.innerHTML = `<b>${escapeHtml(term.title)}</b><p>${escapeHtml(term.text)}</p><button type="button" class="termpop-more" data-action="help-open">Все термины</button>`;
+  document.body.appendChild(pop);
+  const r = anchor.getBoundingClientRect();
+  const width = pop.offsetWidth;
+  const left = Math.max(12, Math.min(window.innerWidth - width - 12, r.left + r.width / 2 - width / 2));
+  const top = r.bottom + 10 + pop.offsetHeight > window.innerHeight ? r.top - pop.offsetHeight - 10 : r.bottom + 10;
+  pop.style.left = `${left + window.scrollX}px`;
+  pop.style.top = `${top + window.scrollY}px`;
+}
+
+function renderHelpBody() {
+  return Object.values(GLOSSARY).map(t => `<div class="help-term"><b>${escapeHtml(t.title)}</b><p>${escapeHtml(t.text)}</p></div>`).join('');
 }

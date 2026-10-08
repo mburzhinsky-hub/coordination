@@ -50,10 +50,22 @@ function deriveEvents(currentTasks, previousTasks, asOf, allKnownIds = new Set()
   return events;
 }
 
+// Events that describe something a person did to the task. If that was long ago (for example the gap between
+// two exports is three weeks), it is history, not a signal for today.
+const ACTIVITY_BOUND_EVENTS = ['REACTIVATED', 'DEADLINE_CHANGED', 'OVERDUE_DEADLINE_MOVED', 'RESPONSIBLE_CHANGED', 'DEADLINE_MISSING_NEW', 'LEFT_CONTROL', 'BECAME_WAITING_CONTROL', 'TASK_RETURNED'];
+
+function isFreshEvent(event, task) {
+  if (!ACTIVITY_BOUND_EVENTS.includes(event.type)) return true;
+  const touched = task.changed || task.created;
+  if (!touched) return true;
+  return diffDays(new Date(event.at), touched) <= SIGNAL_FRESH_DAYS;
+}
+
 function applyEventsToAttention(tasks, events) {
   const byId = groupBy(events.filter(e => e.severity === 'critical' || e.severity === 'watch'), e => String(e.taskId));
   for (const task of tasks) {
-    const taskEvents = byId[String(task.id)] || [];
+    if (task.isCompleted) { task.attention = 'none'; task.attentionReason = ''; continue; }
+    const taskEvents = (byId[String(task.id)] || []).filter(e => isFreshEvent(e, task));
     if (taskEvents.some(e => e.severity === 'critical')) {
       task.attention = 'critical';
       task.attentionReason = taskEvents.find(e => e.severity === 'critical').label;
@@ -77,13 +89,14 @@ function deriveBallOwner(task) {
 function buildAttentionItems(snapshot) {
   const taskMap = new Map(snapshot.tasks.map(t => [String(t.id), t]));
   const eventMap = groupBy((snapshot.events || []).filter(e => e.severity === 'critical' || e.severity === 'watch'), e => String(e.taskId));
-  const items = snapshot.tasks.filter(t => t.attention === 'critical' || t.attention === 'watch').map(task => {
-    const events = eventMap[String(task.id)] || [];
+  const items = snapshot.tasks.filter(t => !t.isCompleted && (t.attention === 'critical' || t.attention === 'watch')).map(task => {
+    const events = (eventMap[String(task.id)] || []).filter(e => isFreshEvent(e, task));
     const event = events.sort((a,b) => severityWeight(b.severity) - severityWeight(a.severity))[0];
     const severity = task.attention;
     const label = event?.label || task.attentionReason || 'требует внимания';
     return {
       taskId: task.id,
+      eventType: event?.type || '',
       project: task.project || 'Без проекта',
       label,
       detail: task.title,
@@ -145,7 +158,6 @@ function summarizePeopleV2(tasks, presence = {people:{}}, roster = []) {
 
 
 function summarizeProjectsV2(tasks, snapshot = state?.currentSnapshot || null) {
-  const eventsByProject = groupBy((snapshot?.events || []).filter(e => e.project), e => e.project);
   return ITO_PROJECTS.map(projectDef => {
     const rows = tasks.filter(t => !t.isCompleted && t.projectId === projectDef.id);
     const active = rows.filter(t => t.loadRelevant);
@@ -154,10 +166,12 @@ function summarizeProjectsV2(tasks, snapshot = state?.currentSnapshot || null) {
     const debt = rows.filter(t => t.debt !== 'none');
     const deadlines = rows.map(t => t.deadline).filter(Boolean).filter(d => d >= new Date(rows[0]?.snapshotAsOf || Date.now())).sort((a,b) => a-b);
     const critical = attention.some(t => t.attention === 'critical');
-    const lastMovementCandidates = [
-      ...rows.flatMap(t => [t.changed, t.closed].filter(Boolean)),
-      ...(eventsByProject[projectDef.name] || []).map(e => new Date(e.at))
-    ].filter(Boolean);
+    // Real movement only: edits and closures made in Bitrix. Service events such as
+    // "task became stale" are produced by the dashboard itself and are not movement.
+    const lastMovementCandidates = tasks
+      .filter(t => t.projectId === projectDef.id)
+      .flatMap(t => [t.changed, t.closed])
+      .filter(Boolean);
     const lastMovementAt = lastMovementCandidates.sort((a,b) => b-a)[0] || null;
     return {
       id: projectDef.id,
