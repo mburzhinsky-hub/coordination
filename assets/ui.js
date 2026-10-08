@@ -160,6 +160,33 @@ function showTermPopover(anchor, key) {
   pop.style.top = `${top + window.scrollY}px`;
 }
 
+/* ---------- task hover card for the age squares ---------- */
+
+const AGE_LANE_LABEL = { acc: 'ждёт приёмки', debt: 'старый долг', live: 'в работе' };
+
+function hideAgePop() { document.getElementById('agePop')?.remove(); }
+
+function showAgePop(anchor) {
+  hideAgePop();
+  const d = anchor.dataset;
+  const pop = document.createElement('div');
+  pop.id = 'agePop';
+  pop.className = 'agepop';
+  pop.setAttribute('role', 'tooltip');
+  pop.innerHTML = `<b>${escapeHtml(d.title)}</b>
+    <div class="agepop-row"><span class="agepop-chip lane-${escapeAttr(d.lane)}">${escapeHtml(AGE_LANE_LABEL[d.lane] || '')}</span><span>${escapeHtml(daysWord(Number(d.age)))} без движения</span></div>
+    ${d.who ? `<div class="agepop-line">${escapeHtml(d.who)}</div>` : ''}
+    <div class="agepop-line">${escapeHtml(d.proj)}${d.due ? ` · срок был ${escapeHtml(d.due)}` : ''}</div>
+    <div class="agepop-cta">Нажмите, чтобы открыть</div>`;
+  document.body.appendChild(pop);
+  const r = anchor.getBoundingClientRect();
+  const w = pop.offsetWidth, h = pop.offsetHeight;
+  const left = Math.max(12, Math.min(window.innerWidth - w - 12, r.left + r.width / 2 - w / 2));
+  const below = r.bottom + 12 + h < window.innerHeight;
+  pop.style.left = `${left + window.scrollX}px`;
+  pop.style.top = `${(below ? r.bottom + 12 : Math.max(12, r.top - h - 12)) + window.scrollY}px`;
+}
+
 function renderHelpBody() {
   return Object.values(GLOSSARY).map(t => `<div class="help-term"><b>${escapeHtml(t.title)}</b><p>${escapeHtml(t.text)}</p></div>`).join('');
 }

@@ -374,7 +374,15 @@ async function copyText(text, okMessage) {
 
 const ACTIONS = {
   'palette-open': () => openPalette(),
-  task: el => openTaskSheet(el.dataset.id),
+  task: el => { hideAgePop(); openTaskSheet(el.dataset.id); },
+  'age-focus': el => {
+    const fig = el.closest('.age-chart');
+    if (!fig) return;
+    const lane = el.dataset.lane;
+    const on = fig.dataset.focus === lane;
+    if (on) delete fig.dataset.focus; else fig.dataset.focus = lane;
+    fig.querySelectorAll('.agn').forEach(btn => btn.setAttribute('aria-pressed', String(btn.dataset.lane === fig.dataset.focus)));
+  },
   'sheet-close': () => closeTaskSheet(),
   person: el => {
     const name = el.dataset.person;
@@ -449,6 +457,13 @@ function bindUi() {
     event.target.value = '';
     if (file) await handleUpload(file);
   });
+
+  /* hover / keyboard focus on an age square shows the whole task */
+  const overSquare = event => event.target.closest?.('.agq');
+  document.addEventListener('pointerover', event => { const el = overSquare(event); if (el && event.pointerType !== 'touch') showAgePop(el); });
+  document.addEventListener('pointerout', event => { if (overSquare(event)) hideAgePop(); });
+  document.addEventListener('focusin', event => { const el = overSquare(event); if (el) showAgePop(el); });
+  document.addEventListener('focusout', event => { if (overSquare(event)) hideAgePop(); });
 
   document.addEventListener('click', async event => {
     const target = event.target;

@@ -182,45 +182,33 @@ function introHtml() {
 function ageChartHtml(b) {
   const chart = buildAgeChart(b.snapshot);
   if (!chart.total) return '';
-  const narrow = typeof window !== 'undefined' && window.matchMedia?.('(max-width: 700px)').matches;
-  const W = narrow ? 380 : 560, padL = narrow ? 70 : 92, padR = 14, laneH = narrow ? 62 : 72, top = 40, axisH = 44;
-  const H = top + laneH * chart.lanes.length + axisH;
-  const R = narrow ? 5.2 : 5.8;
-  const x0 = padL + 10;
-  const x = age => x0 + Math.min(1, age / chart.max) * (W - x0 - padR);
-  const ticks = [0, 14, 30, 60, 90, 120, 150, 180].filter(v => v <= chart.max && (v === 0 || x(v) - x(0) > 26));
-  const bodyH = laneH * chart.lanes.length;
-  const labels = { acc: 'Ждут приёмки', debt: 'Старый долг', live: 'В работе' };
+  const meta = {
+    acc: { name: 'ждут приёмки', hint: 'сдали, но никто не принял' },
+    debt: { name: 'старый долг', hint: 'давно просрочены и не двигаются' },
+    live: { name: 'в работе', hint: 'меняли за последние 2 недели' }
+  };
+  const all = chart.lanes.flatMap(l => l.dots.map(d => ({ ...d, lane: l.id })));
+  const order = { acc: 0, debt: 1, live: 2 };
+  const buckets = [
+    { id: 'fresh', title: 'до 2 недель', from: 0, to: CONTROL_OLD_DAYS },
+    { id: 'mid', title: 'от 2 недель до 2 месяцев', from: CONTROL_OLD_DAYS, to: CONTROL_RED_DAYS },
+    { id: 'old', title: 'больше 2 месяцев', from: CONTROL_RED_DAYS, to: Infinity }
+  ];
   let k = 0;
-  const lanes = chart.lanes.map((lane, li) => {
-    const cy = top + laneH * li + laneH / 2;
-    const placed = [];
-    const dots = [...lane.dots].sort((a, b) => a.age - b.age).map(d => {
-      const px = x(d.age), step = R * 2 + 1.4;
-      let py = 0;
-      for (let n = 0; n < 9; n++) {
-        const off = n === 0 ? 0 : (n % 2 ? 1 : -1) * Math.ceil(n / 2) * step;
-        if (Math.abs(off) > laneH / 2 - R) continue;
-        py = off;
-        if (!placed.some(p => Math.hypot(p.x - px, p.y - off) < step - 0.2)) break;
-      }
-      placed.push({ x: px, y: py });
-      return `<circle class="age-dot lane-${lane.id}" style="--k:${k++}" cx="${px.toFixed(1)}" cy="${(cy + py).toFixed(1)}" r="${R}" tabindex="0" role="button" data-action="task" data-id="${escapeAttr(d.id)}" aria-label="${escapeAttr(`${d.title}, ${shortDays(d.age)}`)}"><title>${escapeHtml(`${shortLabel(d.title, 60)} · ${shortDays(d.age)} без движения`)}</title></circle>`;
-    }).join('');
-    return `<g class="age-lane"><line class="age-rule" x1="0" x2="${W}" y1="${top + laneH * (li + 1)}" y2="${top + laneH * (li + 1)}"/><text class="age-lane-label" x="0" y="${cy - 2}">${labels[lane.id] || escapeHtml(lane.label)}</text><text class="age-lane-count" x="0" y="${cy + 14}">${lane.dots.length} ${pluralRu(lane.dots.length, 'задача', 'задачи', 'задач')}</text>${dots}</g>`;
+  const cols = buckets.map(bk => {
+    const items = all.filter(d => d.age >= bk.from && d.age < bk.to).sort((a, c) => order[a.lane] - order[c.lane] || c.age - a.age);
+    return `<div class="agb agb-${bk.id}"><div class="agb-n">${items.length}</div><div class="agb-t">${bk.title}</div><div class="agq-grid">${items.map(d => {
+      const who = displayName(canonicalItoName(d.who) || d.who || '');
+      return `<button type="button" class="agq lane-${d.lane}" style="--k:${k++}" data-action="task" data-id="${escapeAttr(d.id)}" data-lane="${d.lane}" data-title="${escapeAttr(d.title)}" data-age="${d.age}" data-who="${escapeAttr(who)}" data-proj="${escapeAttr(operationalLabel(d.project))}" data-due="${escapeAttr(d.deadline ? dayMonthShort(d.deadline) : '')}" aria-label="${escapeAttr(`${d.title}. ${meta[d.lane].name}, ${daysWord(d.age)} без движения`)}"></button>`;
+    }).join('')}</div></div>`;
   }).join('');
-  const xa = x(CONTROL_OLD_DAYS), xb = x(CONTROL_RED_DAYS), xe = W - padR;
-  const zones = [
-    { from: xa, to: xb, cls: 'zone-mid', text: narrow ? '2 нед. – 2 мес.' : 'от 2 недель до 2 месяцев' },
-    { from: xb, to: xe, cls: 'zone-old', text: narrow ? 'больше 2 мес.' : 'больше 2 месяцев' }
-  ].filter(z => z.to > z.from);
-  const zoneSvg = zones.map(z => `<rect class="age-zone ${z.cls}" x="${z.from.toFixed(1)}" y="${top}" width="${(z.to - z.from).toFixed(1)}" height="${bodyH}"/>${z.to - z.from > 70 ? `<text class="age-zone-label ${z.cls}" x="${((z.from + z.to) / 2).toFixed(1)}" y="${top - 12}" text-anchor="middle">${z.text}</text>` : ''}`).join('');
-  const axis = ticks.map(v => `<text class="age-tick" x="${x(v).toFixed(1)}" y="${top + bodyH + 18}" text-anchor="middle">${v}</text>`).join('');
-  const oldest = chart.lanes.flatMap(l => l.dots.map(d => ({ ...d, lane: l.id }))).sort((a, c) => c.age - a.age)[0];
-  return `<figure class="age-chart" aria-label="Сколько дней открытые задачи без движения">
-    <figcaption><b>Как давно задачи стоят без движения</b><span>Одна точка — одна задача. Чем правее, тем дольше в ней ничего не менялось. Нажмите на точку, чтобы открыть её.</span></figcaption>
-    <svg viewBox="0 0 ${W} ${H}" role="group" aria-label="Диаграмма: задачи по дням без движения">${zoneSvg}${lanes}${axis}<text class="age-axis-title" x="${xe}" y="${H - 6}" text-anchor="end">дней без движения</text></svg>
-    ${oldest ? `<p class="age-note">Самая давняя: <button type="button" data-action="task" data-id="${escapeAttr(oldest.id)}">${escapeHtml(shortLabel(oldest.title, 54))}</button>, ${daysWord(oldest.age)}.</p>` : ''}
+  const nums = chart.lanes.map(l => `<button type="button" class="agn lane-${l.id}" data-action="age-focus" data-lane="${l.id}" aria-pressed="false"><span class="agn-num">${l.dots.length}</span><span class="agn-name">${meta[l.id].name}</span><span class="agn-hint">${meta[l.id].hint}</span></button>`).join('');
+  const oldest = [...all].sort((a, c) => c.age - a.age)[0];
+  return `<figure class="age-chart" aria-label="Открытые задачи по давности">
+    <figcaption><b>Что застряло и как давно</b><span>Один квадрат — одна задача. Наведите на квадрат, чтобы увидеть её, нажмите, чтобы открыть. Нажмите на число, чтобы выделить своё.</span></figcaption>
+    <div class="agn-row">${nums}</div>
+    <div class="agb-row">${cols}</div>
+    ${oldest ? `<p class="age-note">Дольше всех: <button type="button" data-action="task" data-id="${escapeAttr(oldest.id)}">${escapeHtml(shortLabel(oldest.title, 54))}</button>, ${daysWord(oldest.age)}.</p>` : ''}
   </figure>`;
 }
 
@@ -250,7 +238,6 @@ function viewToday(b) {
       <div class="hero-main">
         <div class="eyebrow">${weekdayCap(asOf)}, ${dayMonth(asOf)} · срез ${clockTime(asOf)}</div>
         <h1 class="hero-title" data-reveal data-glitch>${headlineHtml(b.headline)}</h1>
-        <p class="hero-gloss"><b>Приёмка</b> — исполнитель сдал работу и ждёт, пока постановщик её проверит. <b>Долг</b> — задача давно просрочена и не двигается.</p>
         <p class="hero-note">${s ? `Динамика — к срезу ${dayMonthShort(s.since)}${s.hasGap ? ` (${daysWord(s.gapDays)} назад)` : ''}.` : 'Динамика появится после второй выгрузки.'}</p>
       </div>
       ${ageChartHtml(b)}

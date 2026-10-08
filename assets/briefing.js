@@ -453,7 +453,7 @@ function buildAgeChart(snapshot) {
     const lane = t.isWaitingControl ? 'acc' : t.debt !== 'none' ? 'debt' : t.loadRelevant ? 'live' : '';
     if (!lane) { other++; continue; }
     const age = Math.max(0, Math.round(lane === 'acc' ? (t.waitingControlDays || t.inactivityDays || 0) : (t.inactivityDays || 0)));
-    lanes.find(l => l.id === lane).dots.push({ id: String(t.id), title: t.title, age, who: t.responsible || '' });
+    lanes.find(l => l.id === lane).dots.push({ id: String(t.id), title: t.title, age, who: t.responsible || '', project: t.project || '', deadline: t.deadline || null });
   }
   const oldest = Math.max(0, ...lanes.flatMap(l => l.dots.map(d => d.age)));
   const max = Math.min(180, Math.max(90, Math.ceil(oldest / 30) * 30));
