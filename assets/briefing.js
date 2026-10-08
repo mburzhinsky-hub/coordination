@@ -440,6 +440,26 @@ function filterInbox(inbox, filter) {
 
 /* ---------- debt audit ---------- */
 
+/** Open tasks as dots on an age axis: acceptance by days waiting, the rest by days without movement. */
+const AGE_LANES = [
+  { id: 'acc', label: 'Приёмка' },
+  { id: 'debt', label: 'Долг' },
+  { id: 'live', label: 'В работе' }
+];
+function buildAgeChart(snapshot) {
+  const lanes = AGE_LANES.map(l => ({ ...l, dots: [] }));
+  let other = 0;
+  for (const t of openTasks(snapshot)) {
+    const lane = t.isWaitingControl ? 'acc' : t.debt !== 'none' ? 'debt' : t.loadRelevant ? 'live' : '';
+    if (!lane) { other++; continue; }
+    const age = Math.max(0, Math.round(lane === 'acc' ? (t.waitingControlDays || t.inactivityDays || 0) : (t.inactivityDays || 0)));
+    lanes.find(l => l.id === lane).dots.push({ id: String(t.id), title: t.title, age, who: t.responsible || '' });
+  }
+  const oldest = Math.max(0, ...lanes.flatMap(l => l.dots.map(d => d.age)));
+  const max = Math.min(180, Math.max(90, Math.ceil(oldest / 30) * 30));
+  return { lanes, other, max, oldest, total: lanes.reduce((s, l) => s + l.dots.length, 0) };
+}
+
 function buildDebtAudit(snapshot, triage = {}) {
   const debt = summarizeDebt(snapshot);
   const rows = debt.tasks.map(task => ({ task, state: triage[String(task.id)] || null })).filter(r => triageVisible(r.state, r.task, snapshot));

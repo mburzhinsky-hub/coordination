@@ -178,6 +178,45 @@ function introHtml() {
   </aside>`;
 }
 
+/* Dot plot: every open task is a dot, placed by how long it has been without movement. */
+function ageChartHtml(b) {
+  const chart = buildAgeChart(b.snapshot);
+  if (!chart.total) return '';
+  const narrow = typeof window !== 'undefined' && window.matchMedia?.('(max-width: 700px)').matches;
+  const W = narrow ? 380 : 560, padL = narrow ? 62 : 74, padR = 22, laneH = narrow ? 62 : 74, top = 34, axisH = 34;
+  const H = top + laneH * chart.lanes.length + axisH;
+  const R = narrow ? 5.2 : 5.8;
+  const x0 = padL + 12;
+  const x = age => x0 + Math.min(1, age / chart.max) * (W - x0 - padR);
+  const ticks = [0, 14, 30, 60, 90, 120, 150, 180].filter(v => v <= chart.max && (v === 0 || x(v) - x(0) > 26));
+  let k = 0;
+  const lanes = chart.lanes.map((lane, li) => {
+    const cy = top + laneH * li + laneH / 2 + 4;
+    const placed = [];
+    const dots = [...lane.dots].sort((a, b) => a.age - b.age).map(d => {
+      const px = x(d.age), step = R * 2 + 1.4;
+      let py = 0;
+      for (let n = 0; n < 9; n++) {
+        const off = n === 0 ? 0 : (n % 2 ? 1 : -1) * Math.ceil(n / 2) * step;
+        if (Math.abs(off) > laneH / 2 - R) continue;
+        if (!placed.some(p => Math.hypot(p.x - px, p.y - off) < step - 0.2)) { py = off; break; }
+        py = off;
+      }
+      placed.push({ x: px, y: py });
+      const old = lane.id === 'acc' ? d.age >= CONTROL_RED_DAYS : d.age >= 90;
+      return `<circle class="age-dot lane-${lane.id} ${old ? 'is-old' : ''}" style="--k:${k++}" cx="${px.toFixed(1)}" cy="${(cy + py).toFixed(1)}" r="${R}" tabindex="0" role="button" data-action="task" data-id="${escapeAttr(d.id)}" aria-label="${escapeAttr(`${d.title}, ${shortDays(d.age)}`)}"><title>${escapeHtml(`${shortLabel(d.title, 60)} · ${shortDays(d.age)}`)}</title></circle>`;
+    }).join('');
+    return `<g class="age-lane"><line class="age-rule" x1="0" x2="${W}" y1="${top + laneH * li + laneH}" y2="${top + laneH * li + laneH}"/><text class="age-lane-label" x="0" y="${cy - 3}">${escapeHtml(lane.label)}</text><text class="age-lane-count" x="0" y="${cy + 13}">${lane.dots.length} ${pluralRu(lane.dots.length, 'задача', 'задачи', 'задач')}</text>${dots}</g>`;
+  }).join('');
+  const marks = [[CONTROL_OLD_DAYS, narrow ? '14 дн.' : 'приёмка встала'], [CONTROL_RED_DAYS, narrow ? '60 дн.' : 'красная зона']].filter(([v]) => v < chart.max);
+  const guides = marks.map(([v, label]) => `<g class="age-guide"><line x1="${x(v).toFixed(1)}" x2="${x(v).toFixed(1)}" y1="${top - 6}" y2="${top + laneH * chart.lanes.length}"/><text x="${(x(v) + 5).toFixed(1)}" y="${top - 12}">${escapeHtml(label)}</text></g>`).join('');
+  const axis = ticks.map(v => `<text class="age-tick" x="${x(v).toFixed(1)}" y="${H - 8}" text-anchor="${v === 0 ? 'start' : 'middle'}">${v}</text>`).join('');
+  return `<figure class="age-chart" aria-label="Возраст открытых задач">
+    <figcaption><b>Сколько дней задачи стоят без движения</b><span>Одна точка — одна задача. Нажмите на точку, чтобы открыть её.</span></figcaption>
+    <svg viewBox="0 0 ${W} ${H}" role="group" aria-label="Диаграмма возраста задач">${guides}${lanes}${axis}</svg>
+  </figure>`;
+}
+
 function viewToday(b) {
   const snapshot = b.snapshot;
   const s = b.since;
@@ -201,9 +240,12 @@ function viewToday(b) {
   return `<section class="view today">
     <div class="hero" data-glitch>
       <canvas class="hero-dots" data-dotfield aria-hidden="true"></canvas>
-      <div class="eyebrow">${weekdayCap(asOf)}, ${dayMonth(asOf)} · срез ${clockTime(asOf)}</div>
-      <h1 class="hero-title" data-reveal data-glitch>${headlineHtml(b.headline)}</h1>
-      <p class="hero-note">${s ? `Динамика — к срезу ${dayMonthShort(s.since)}${s.hasGap ? ` (${daysWord(s.gapDays)} назад)` : ''}.` : 'Динамика появится после второй выгрузки.'}</p>
+      <div class="hero-main">
+        <div class="eyebrow">${weekdayCap(asOf)}, ${dayMonth(asOf)} · срез ${clockTime(asOf)}</div>
+        <h1 class="hero-title" data-reveal data-glitch>${headlineHtml(b.headline)}</h1>
+        <p class="hero-note">${s ? `Динамика — к срезу ${dayMonthShort(s.since)}${s.hasGap ? ` (${daysWord(s.gapDays)} назад)` : ''}.` : 'Динамика появится после второй выгрузки.'}</p>
+      </div>
+      ${ageChartHtml(b)}
     </div>
     ${state.ui.introSeen ? '' : introHtml()}
     <div class="stories">${b.stories.map((st, i) => `<article class="story tone-${st.tone} rise" style="--i:${i + 1}">

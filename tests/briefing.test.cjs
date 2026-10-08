@@ -158,6 +158,14 @@ const t10 = s0.tasks.find(t => t.id === '10');
 assert.equal(taskLifecycle(t10).find(s => s.current).id, 'control');
 assert.match(taskTimeline(t10, s0, [s0])[0].title, /Приёмка длится 86 дней/);
 
+// ---- age chart: every classed open task is one dot, acceptance by days waiting
+const ageChart = buildAgeChart(s0);
+assert.equal(ageChart.lanes.find(l => l.id === 'acc').dots.length, 3);
+assert.equal(ageChart.lanes.find(l => l.id === 'live').dots.length, 1);
+assert.equal(ageChart.lanes.find(l => l.id === 'acc').dots.find(d => d.id === '10').age, 86);
+assert.ok(ageChart.max >= 90 && ageChart.max <= 180);
+assert.equal(ageChart.total + ageChart.other, summarizeLoadBasis ? ageChart.total + ageChart.other : 0);
+
 // ---- search
 const found = searchEntities(s0, 'бахр');
 assert.equal(found.projects[0].id, 'bakhrushin');
