@@ -1,90 +1,123 @@
 <!doctype html>
-<html lang="ru">
+<html lang="ru" data-fx="on">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#f6f6f4" />
-  <title>ИТО — Обзор</title>
-  <link rel="stylesheet" href="assets/style.css?v=20261007presence1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#f3f2ee" />
+  <title>ИТО — Координация</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 36 36'%3E%3Cg fill='%2314140F'%3E%3Ccircle cx='18' cy='6' r='2'/%3E%3Ccircle cx='10' cy='10' r='2'/%3E%3Ccircle cx='26' cy='10' r='2'/%3E%3Ccircle cx='6' cy='18' r='2'/%3E%3Ccircle cx='18' cy='18' r='2'/%3E%3Ccircle cx='30' cy='18' r='2'/%3E%3Ccircle cx='10' cy='26' r='2'/%3E%3Ccircle cx='26' cy='26' r='2'/%3E%3Ccircle cx='18' cy='30' r='2'/%3E%3C/g%3E%3C/svg%3E" />
+  <link rel="preload" href="assets/fonts/inter-cyrillic-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="assets/style.css?v=20261009tg1" />
 </head>
 <body>
-  <div class="app-shell">
-    <aside class="sidebar" aria-label="Навигация">
-      <div class="brand-mark" aria-label="ИТО"><span></span></div>
-      <nav class="nav-list">
-        <button class="nav-item is-active" data-view="overview" type="button"><span class="nav-icon">▥</span><span>Обзор</span></button>
-        <button class="nav-item" data-view="people" type="button"><span class="nav-icon">♙</span><span>Люди</span></button>
-        <button class="nav-item" data-view="projects" type="button"><span class="nav-icon">□</span><span>Проекты</span></button>
-        <button class="nav-item" data-view="attention" type="button"><span class="nav-icon">!</span><span>Внимание</span><span id="navAttentionCount" class="nav-badge" hidden></span></button>
-        <button class="nav-item" data-view="plan" type="button"><span class="nav-icon">▣</span><span>План</span></button>
-      </nav>
-    </aside>
+  <a class="skip" href="#viewRoot">К содержимому</a>
 
-    <main class="workspace">
-      <header class="topbar">
-        <div>
-          <h1 id="pageTitle">ИТО — Обзор</h1>
-          <p id="pageSubtitle" class="page-subtitle">Ежедневный срез инженерно-технического отдела</p>
-        </div>
-        <div class="topbar-actions">
-          <span id="syncStatus" class="sync-status">Локально</span>
-          <span id="updatedAt" class="updated-at">Нет данных</span>
-          <label class="refresh-button" for="uploadInput"><span class="refresh-icon">↻</span><span>Обновить</span></label>
-          <input id="uploadInput" class="visually-hidden" type="file" accept=".xls,.html,.htm,.txt" />
-        </div>
-      </header>
+  <div class="app" id="app">
+    <aside class="rail" id="rail" aria-label="Навигация"></aside>
 
-      <section id="qualityBanner" class="quality-banner" hidden></section>
-      <section id="viewRoot" aria-live="polite"></section>
+    <main class="stage" id="stage">
+      <div class="dot-sweep" id="dotSweep" aria-hidden="true"></div>
+      <header class="topbar" id="topbar"></header>
+      <div id="freshBanner" class="banner banner-red" role="alert" hidden></div>
+      <div id="historyBanner" class="banner banner-blue" hidden></div>
+      <section id="qualityBanner" class="banner banner-amber" hidden></section>
+      <section id="viewRoot" aria-live="polite" tabindex="-1">
+        <noscript><p class="loading-state">Для работы дашборда нужен JavaScript.</p></noscript>
+      </section>
     </main>
+
+    <nav class="tabbar" id="tabbar" aria-label="Разделы"></nav>
   </div>
 
-  <dialog id="taskDialog" class="task-dialog">
-    <div class="task-detail-card">
-      <div class="task-detail-head">
-        <div>
-          <div id="taskDetailProject" class="eyebrow"></div>
-          <h2 id="taskDetailTitle"></h2>
-        </div>
-        <button id="taskDetailClose" class="icon-button" type="button" aria-label="Закрыть">×</button>
-      </div>
-      <div id="taskDetailMeta" class="task-detail-meta"></div>
-      <div class="task-detail-section">
-        <div class="task-detail-label">Описание</div>
-        <div id="taskDetailDescription" class="task-detail-description"></div>
-      </div>
-      <div id="taskDetailParentWrap" class="task-detail-section" hidden>
-        <div class="task-detail-label">Родительская задача</div>
-        <div id="taskDetailParent" class="task-detail-parent"></div>
-      </div>
-    </div>
+  <div class="drop-veil" id="dropVeil" hidden><div><b>Отпустите файл</b><span>Выгрузка задач из Bitrix (.xls)</span></div></div>
+  <div id="tvRoot" class="tv" hidden></div>
+  <div id="toastRoot" class="toast-root" aria-live="polite"></div>
+
+  <dialog id="taskDialog" class="sheet" aria-label="Задача">
+    <div class="sheet-bar"><button class="icon-btn" type="button" data-action="sheet-close" aria-label="Закрыть"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+    <div class="sheet-body" id="taskSheetBody"></div>
   </dialog>
 
-  <dialog id="presenceDialog" class="presence-dialog">
-    <form method="dialog" class="presence-card" id="presenceForm">
-      <div class="presence-head">
+  <dialog id="presenceDialog" class="modal presence-dialog" aria-labelledby="presenceTitle">
+    <form method="dialog" class="modal-card" id="presenceForm">
+      <div class="modal-head">
         <div>
-          <div class="eyebrow">ЕЖЕДНЕВНЫЙ КОНТЕКСТ</div>
-          <h2>Кто где сегодня</h2>
-          <p>Для каждого сотрудника укажите: в офисе, на объекте, удалённо или в отпуске. Для объекта выберите проект.</p>
+          <div class="eyebrow">Ежедневный контекст</div>
+          <h2 id="presenceTitle">Кто где сегодня</h2>
+          <p class="muted">Для каждого сотрудника укажите: в офисе, на объекте, удалённо или в отпуске. Для объекта выберите проект.</p>
         </div>
-        <button id="presenceClose" class="icon-button" value="cancel" type="button" aria-label="Закрыть">×</button>
+        <button id="presenceClose" class="icon-btn" value="cancel" type="button" aria-label="Закрыть"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       </div>
       <div id="presenceMatrix" class="presence-editor"></div>
-      <div class="presence-legend"><span>Вчерашние значения перенесены автоматически — меняйте только то, что изменилось.</span></div>
-      <div class="presence-actions">
-        <button id="presenceSkip" class="button button-ghost" type="button">Оставить как вчера</button>
-        <button id="presenceSave" class="button button-primary" type="button">Готово</button>
+      <p class="muted presence-legend">Вчерашние значения перенесены автоматически: меняйте только то, что изменилось.</p>
+      <div class="modal-actions">
+        <button id="presenceSkip" class="btn btn-ghost" type="button">Оставить как вчера</button>
+        <button id="presenceSave" class="btn btn-dark" type="button">Готово</button>
       </div>
     </form>
   </dialog>
 
-  <script src="assets/app.js?v=20261007presence1"></script>
-  <script src="assets/ui.js?v=20261007presence1"></script>
-  <script src="assets/upload.js?v=20261007presence1"></script>
-  <script src="assets/normalize.js?v=20261007presence1"></script>
-  <script src="assets/model.js?v=20261007presence1"></script>
-  <script src="assets/storage.js?v=20261007presence1"></script>
-  <script src="assets/helpers.js?v=20261007presence1"></script>
+  <dialog id="paletteDialog" class="palette" aria-label="Поиск и команды">
+    <div class="palette-box">
+      <div class="palette-input">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.5-4.5"/></svg>
+        <input id="paletteInput" type="text" placeholder="Задача, проект, человек или команда" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="paletteList" aria-label="Поиск" />
+        <kbd class="kbd">esc</kbd>
+      </div>
+      <div id="paletteList" class="palette-list" role="listbox" aria-label="Результаты"></div>
+      <div class="palette-foot"><span><kbd class="kbd">↑</kbd> <kbd class="kbd">↓</kbd> выбрать</span><span><kbd class="kbd">⏎</kbd> открыть</span></div>
+    </div>
+  </dialog>
+
+  <dialog id="tgDialog" class="modal tg-dialog" aria-labelledby="tgTitle">
+    <form class="modal-card" id="tgForm" novalidate>
+      <div class="modal-head">
+        <div>
+          <div class="eyebrow">Telegram</div>
+          <h2 id="tgTitle">Ники сотрудников</h2>
+          <p class="muted">Укажите ник один раз. Дальше кнопка «Написать» в задаче откроет чат с готовым текстом. Ники хранятся только в дашборде, в Bitrix ничего не уходит.</p>
+        </div>
+        <button class="icon-btn" type="button" data-action="tg-close" aria-label="Закрыть"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <details class="tg-bulk">
+        <summary>Вставить списком</summary>
+        <textarea id="tgBulk" rows="5" placeholder="Храпугин — @nick&#10;Семён Онищенко t.me/nick" spellcheck="false" aria-label="Список: фамилия и ник, по одному человеку в строке"></textarea>
+        <div class="tg-bulk-row"><button class="btn btn-ghost btn-sm" type="button" data-action="tg-parse">Разобрать</button><span id="tgBulkNote" class="muted" role="status"></span></div>
+      </details>
+      <div id="tgList" class="tg-list"></div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" type="button" data-action="tg-close">Отмена</button>
+        <button class="btn btn-dark" type="submit">Сохранить</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="helpDialog" class="modal" aria-labelledby="helpTitle">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div><div class="eyebrow">Справка</div><h2 id="helpTitle">Что значат слова на экране</h2></div>
+        <button class="icon-btn" type="button" data-action="help-close" aria-label="Закрыть"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div id="helpBody" class="help-body"></div>
+      <div class="help-keys">
+        <b>Клавиши</b>
+        <p><kbd class="kbd">⌘K</kbd> или <kbd class="kbd">/</kbd> поиск и команды · <kbd class="kbd">1</kbd>–<kbd class="kbd">7</kbd> разделы · <kbd class="kbd">J</kbd> <kbd class="kbd">K</kbd> по очереди · <kbd class="kbd">A</kbd> назначить · <kbd class="kbd">S</kbd> позже · <kbd class="kbd">E</kbd> эскалация · <kbd class="kbd">⏎</kbd> готово. Буквы работают и в русской раскладке.</p>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="assets/briefing.js?v=20261009tg1"></script>
+  <script src="assets/kit.js?v=20261009tg1"></script>
+  <script src="assets/fx.js?v=20261009tg1"></script>
+  <script src="assets/views.js?v=20261009tg1"></script>
+  <script src="assets/views2.js?v=20261009tg1"></script>
+  <script src="assets/palette.js?v=20261009tg1"></script>
+  <script src="assets/ui.js?v=20261009tg1"></script>
+  <script src="assets/upload.js?v=20261009tg1"></script>
+  <script src="assets/normalize.js?v=20261009tg1"></script>
+  <script src="assets/model.js?v=20261009tg1"></script>
+  <script src="assets/storage.js?v=20261009tg1"></script>
+  <script src="assets/helpers.js?v=20261009tg1"></script>
+  <script src="assets/app.js?v=20261009tg1"></script>
 </body>
 </html>

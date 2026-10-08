@@ -19,7 +19,7 @@ function renderPresenceEditor(roster, draft) {
   const projectOptions = ITO_PROJECTS.map(project => `<option value="${escapeAttr(project.id)}">${escapeHtml(project.name)}</option>`).join('');
   document.getElementById('presenceMatrix').innerHTML = `<table class="presence-edit-table"><thead><tr><th>Сотрудник</th><th>Где сегодня</th><th>Проект / объект</th></tr></thead><tbody>${roster.map(person => {
     const entry = normalizePresenceEntry(draft.people?.[person]);
-    return `<tr><td>${escapeHtml(person)}</td><td><select class="presence-mode-select" data-presence-person="${escapeAttr(person)}"><option value="" ${entry.mode ? '' : 'selected'}>Не указано</option>${PRESENCE_MODES.map(mode => `<option value="${mode.id}" ${entry.mode === mode.id ? 'selected' : ''}>${escapeHtml(mode.label)}</option>`).join('')}</select></td><td><select class="presence-project-select" data-presence-project-person="${escapeAttr(person)}" ${entry.mode === 'site' ? '' : 'disabled'}><option value="">Выберите проект</option>${projectOptions.replace(`value="${entry.projectId}"`, `value="${entry.projectId}" selected`)}</select></td></tr>`;
+    return `<tr><td>${escapeHtml(typeof displayName === 'function' ? displayName(person) : person)}</td><td><select class="presence-mode-select" data-presence-person="${escapeAttr(person)}"><option value="" ${entry.mode ? '' : 'selected'}>Не указано</option>${PRESENCE_MODES.map(mode => `<option value="${mode.id}" ${entry.mode === mode.id ? 'selected' : ''}>${escapeHtml(mode.label)}</option>`).join('')}</select></td><td><select class="presence-project-select" data-presence-project-person="${escapeAttr(person)}" ${entry.mode === 'site' ? '' : 'disabled'}><option value="">Выберите проект</option>${projectOptions.replace(`value="${entry.projectId}"`, `value="${entry.projectId}" selected`)}</select></td></tr>`;
   }).join('')}</tbody></table>`;
 }
 
@@ -47,7 +47,7 @@ async function savePendingPresence(useChanges) {
   state.roster = [...ITO_ROSTER];
   await saveRoster(state.roster);
   document.getElementById('presenceDialog')?.close();
-  renderCurrentView();
+  renderCurrentView({ soft: true });
 }
 
 function presenceProjectWeight(presence, projectId) {
@@ -267,11 +267,16 @@ async function syncSharedState() {
     await refreshSnapshots();
     if (!state.snapshots.length) return;
     const latest = state.snapshots[state.snapshots.length - 1];
-    const snapshotChanged = !state.currentSnapshot || latest.id !== state.currentSnapshot.id;
-    state.currentSnapshot = latest;
-    state.presence = await loadPresence(latest.id) || { people: {} };
+    const snapshotChanged = !state.latestSnapshot || latest.id !== state.latestSnapshot.id;
+    state.latestSnapshot = latest;
+    state.triage = await loadTriage();
+    state.telegram = await loadTelegram();
+    if (!state.historyMode) {
+      state.currentSnapshot = latest;
+      state.presence = await loadPresence(latest.id) || { people: {} };
+    }
     state.roster = await loadRoster();
-    renderCurrentView();
+    renderCurrentView({ soft: !snapshotChanged });
     if (snapshotChanged) showSyncFlash('Получен новый общий срез');
   } catch (error) {
     console.warn('Shared sync failed', error);

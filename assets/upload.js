@@ -24,7 +24,9 @@ async function handleUpload(file) {
     await putRecord('sources', { id: snapshot.id, asOf: snapshot.asOf, fileName, text, savedAt: new Date().toISOString() });
     await pruneSources(14);
     await refreshSnapshots();
-    state.currentSnapshot = state.snapshots[state.snapshots.length - 1];
+    state.latestSnapshot = state.snapshots[state.snapshots.length - 1];
+    state.currentSnapshot = state.latestSnapshot;
+    state.historyMode = false;
     state.roster = mergeRoster(state.currentSnapshot.tasks, state.roster, state.presence);
     await saveRoster(state.roster);
     await preparePresenceEditor(state.currentSnapshot);
