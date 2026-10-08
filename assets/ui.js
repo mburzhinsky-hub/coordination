@@ -94,6 +94,20 @@ function setBadge(id, count, tone) {
   el.className = `badge badge-${tone}`;
 }
 
+/* ---------- Telegram draft for the open task: who, which template, the (editable) text ---------- */
+
+function tgDraftFor(task) {
+  const recipients = telegramRecipients(task);
+  let draft = state.ui.tg;
+  const valid = draft && draft.taskId === String(task.id) && recipients.some(r => personKey(r.name) === personKey(draft.who));
+  if (!valid) {
+    const who = recipients[0]?.name || '';
+    const tpl = defaultTelegramTemplate(task);
+    draft = state.ui.tg = { taskId: String(task.id), who, tpl, text: buildTelegramText(tpl, task, who) };
+  }
+  return draft;
+}
+
 /* ---------- task sheet ---------- */
 
 function inboxItemFor(task) {

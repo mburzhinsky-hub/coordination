@@ -87,6 +87,7 @@ const state = {
   presence: { people: {} },
   roster: [],
   triage: {},
+  telegram: { people: {} },
   pendingPresence: null,
   pendingPresenceSnapshotId: null,
   busy: false,
@@ -97,7 +98,7 @@ const state = {
   syncing: false,
   tvOpen: false,
   tvTimer: 0,
-  ui: { inboxFilter: 'all', sel: 0, assignFor: '', peopleSel: '', projectSel: '', debtFilter: 'all', histSel: '', introSeen: false, sheetTask: '', toastUndo: null, tvScene: 0, prevRoute: 'today' }
+  ui: { inboxFilter: 'all', sel: 0, assignFor: '', peopleSel: '', projectSel: '', debtFilter: 'all', histSel: '', introSeen: false, sheetTask: '', tg: null, toastUndo: null, tvScene: 0, prevRoute: 'today' }
 };
 
 function viewFor(name) {
@@ -131,6 +132,7 @@ async function init() {
     state.roster = await loadRoster();
     state.presence = await loadPresence(state.currentSnapshot.id) || { people: {} };
     state.triage = await loadTriage();
+    state.telegram = await loadTelegram();
     applyRoute(parseRoute(), { first: true });
     startSharedSync();
     startClock();
@@ -159,6 +161,7 @@ function renderChrome() {
       </div>
       <div class="rail-tools">
         <button type="button" class="tool" data-action="tv-open">${icon('tv')}<span>Экран</span></button>
+        <button type="button" class="tool" data-action="tg-open">${icon('send')}<span>Ники</span></button>
         <button type="button" class="tool" data-action="help-open">${icon('help')}<span>Справка</span></button>
         <button type="button" class="tool" id="fxToggle" data-action="fx-toggle" aria-pressed="false">${icon('spark')}<span>Эффекты</span></button>
       </div>
@@ -301,6 +304,124 @@ function currentInboxList() {
   return filterInbox(buildInbox(state.currentSnapshot, state.triage), state.ui.inboxFilter);
 }
 
+/* ---------- Telegram: nicknames live in the dashboard (browser or shared server), never in the repository ---------- */
+
+async function loadTelegram() {
+  try {
+    const rec = await getRecord('settings', 'telegram');
+    const people = rec?.value?.people;
+    return { people: people && typeof people === 'object' ? { ...people } : {} };
+  } catch (_) { return { people: {} }; }
+}
+
+/** changes: { "Имя Фамилия": "nick" | null }. In shared mode other browsers' nicks are kept for names we did not touch. */
+async function saveTelegramChanges(changes) {
+  const base = state.sharedMode ? (await loadTelegram()).people : { ...state.telegram.people };
+  for (const [name, nick] of Object.entries(changes)) { if (nick) base[name] = nick; else delete base[name]; }
+  state.telegram = { people: base };
+  await putRecord('settings', { id: 'telegram', value: { people: base } });
+}
+
+function tgTaskById(id) {
+  return state.currentSnapshot?.tasks?.find(t => String(t.id) === String(id)) || null;
+}
+
+function openTgDialog(focusName = '') {
+  const dialog = document.getElementById('tgDialog');
+  if (!dialog) return;
+  const names = [...ITO_ROSTER];
+  Object.keys(state.telegram.people).forEach(n => { if (!names.includes(n)) names.push(n); });
+  if (focusName && !names.includes(focusName)) names.push(focusName);
+  document.getElementById('tgList').innerHTML = names.map(name => {
+    const nick = state.telegram.people[name] || '';
+    return `<div class="tg-item"><span class="tg-item-name">${avatarHtml(name, 28)}<b>${escapeHtml(displayName(name))}</b></span>
+      <input type="text" class="tg-input" data-person="${escapeAttr(name)}" value="${escapeAttr(nick ? '@' + nick : '')}" placeholder="@username" autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="Ник в Telegram: ${escapeAttr(displayName(name))}" />
+      <small class="tg-err" hidden>Ник: латиница, цифры и _, от 5 знаков</small></div>`;
+  }).join('');
+  const note = document.getElementById('tgBulkNote');
+  if (note) note.textContent = '';
+  const bulk = document.getElementById('tgBulk');
+  if (bulk) bulk.value = '';
+  if (!dialog.open) dialog.showModal();
+  const inputs = [...document.querySelectorAll('#tgList .tg-input')];
+  const target = inputs.find(i => i.dataset.person === focusName) || inputs.find(i => !i.value) || inputs[0];
+  target?.focus({ preventScroll: false });
+  target?.scrollIntoView?.({ block: 'nearest' });
+}
+
+async function saveTgDialog() {
+  const inputs = [...document.querySelectorAll('#tgList .tg-input')];
+  const changes = {};
+  let firstBad = null;
+  inputs.forEach(input => {
+    const name = input.dataset.person;
+    const raw = input.value.trim();
+    const err = input.parentElement.querySelector('.tg-err');
+    const nick = raw ? normalizeTgNick(raw) : '';
+    const bad = Boolean(raw) && !nick;
+    if (err) err.hidden = !bad;
+    if (bad) { input.setAttribute('aria-invalid', 'true'); firstBad ||= input; } else input.removeAttribute('aria-invalid');
+    if (bad) return;
+    const was = state.telegram.people[name] || '';
+    if (nick !== was) changes[name] = nick || null;
+  });
+  if (firstBad) { firstBad.focus(); return; }
+  const count = Object.keys(changes).length;
+  if (count) {
+    try { await saveTelegramChanges(changes); } catch (error) { console.error(error); showToast('Не удалось сохранить ники. Попробуйте ещё раз.'); return; }
+  }
+  document.getElementById('tgDialog')?.close();
+  softRender();
+  const total = Object.keys(state.telegram.people).length;
+  showToast(count ? `Ники сохранены. Всего в списке: ${total}` : 'Ники не изменились');
+}
+
+function parseTgBulk() {
+  const rows = parseTgList(document.getElementById('tgBulk')?.value || '');
+  const inputs = [...document.querySelectorAll('#tgList .tg-input')];
+  let filled = 0;
+  const skipped = [];
+  rows.forEach(row => {
+    const input = row.name && row.nick ? inputs.find(i => i.dataset.person === row.name) : null;
+    if (input) { input.value = '@' + row.nick; filled++; } else skipped.push(row.line);
+  });
+  const note = document.getElementById('tgBulkNote');
+  if (note) note.textContent = !rows.length ? 'Не нашёл ни одной строки вида «Фамилия — @ник».' : `Подставлено: ${filled}.${skipped.length ? ` Не разобрал: ${skipped.map(l => `«${shortLabel(l, 28)}»`).join(', ')}.` : ' Проверьте и нажмите «Сохранить».'}`;
+}
+
+/* ---------- Telegram: compose block inside a task ---------- */
+
+function rerenderTgSections(task, focusFrom) {
+  document.querySelectorAll(`.tg[data-task="${CSS.escape(String(task.id))}"]`).forEach(section => {
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = tgSectionHtml(task);
+    const fresh = wrapper.firstElementChild;
+    if (fresh) section.replaceWith(fresh); else section.remove();
+  });
+  if (!focusFrom) return;
+  const again = [...document.querySelectorAll(`.tg[data-task="${CSS.escape(String(task.id))}"] [data-action="${focusFrom.action}"]`)].find(b => (b.dataset.person || b.dataset.tpl) === focusFrom.key);
+  again?.focus();
+}
+
+function tgChange(el, patch) {
+  const section = el.closest('.tg');
+  const task = tgTaskById(section?.dataset.task);
+  if (!task || state.historyMode) return;
+  const draft = tgDraftFor(task);
+  Object.assign(draft, patch);
+  draft.text = buildTelegramText(draft.tpl, task, draft.who);
+  rerenderTgSections(task, { action: el.dataset.action, key: el.dataset.person || el.dataset.tpl });
+}
+
+function tgCurrent(el) {
+  const task = tgTaskById(el.closest('.tg')?.dataset.task);
+  if (!task) return null;
+  const draft = tgDraftFor(task);
+  const live = el.closest('.tg').querySelector('.tg-text');
+  if (live) draft.text = live.value;
+  return { task, draft, nick: state.telegram.people[draft.who] || '' };
+}
+
 /* ---------- history mode, TV, help ---------- */
 
 async function showSnapshot(snapshot) {
@@ -355,6 +476,7 @@ function runAppFunction(name) {
   else if (name === 'tv') navigate('tv');
   else if (name === 'fx') ACTIONS['fx-toggle']();
   else if (name === 'help') openHelp();
+  else if (name === 'telegram') openTgDialog('');
 }
 
 function startClock() {
@@ -444,6 +566,25 @@ const ACTIONS = {
     renderCurrentView({ soft: !on });
     showToast(on ? 'Анимации включены' : 'Анимации выключены');
   },
+  'tg-who': el => tgChange(el, { who: el.dataset.person }),
+  'tg-tpl': el => tgChange(el, { tpl: el.dataset.tpl }),
+  'tg-nick': el => openTgDialog(el.dataset.person || ''),
+  'tg-open': () => openTgDialog(''),
+  'tg-close': () => document.getElementById('tgDialog')?.close(),
+  'tg-parse': () => parseTgBulk(),
+  'tg-copy': el => { const cur = tgCurrent(el); if (cur) copyText(cur.draft.text, 'Текст скопирован'); },
+  'tg-send': el => {
+    const cur = tgCurrent(el);
+    if (!cur) return;
+    if (!cur.nick) { openTgDialog(cur.draft.who); return; }
+    /* copy first (still inside the click), then open the chat with the text prefilled */
+    const copied = navigator.clipboard?.writeText ? navigator.clipboard.writeText(cur.draft.text).then(() => true, () => false) : Promise.resolve(false);
+    const url = telegramUrl(cur.nick, cur.draft.text);
+    const link = document.createElement('a');
+    link.href = url; link.target = '_blank'; link.rel = 'noopener noreferrer';
+    document.body.appendChild(link); link.click(); link.remove();
+    copied.then(ok => showToast(ok ? 'Чат открыт, текст в поле и в буфере. Осталось нажать «Отправить»' : 'Чат открыт, текст в поле. Осталось нажать «Отправить»'));
+  },
   'help-open': () => { hideTermPopover(); openHelp(); },
   'help-close': () => document.getElementById('helpDialog')?.close()
 };
@@ -464,6 +605,15 @@ function bindUi() {
   document.addEventListener('pointerout', event => { if (overSquare(event)) hideAgePop(); });
   document.addEventListener('focusin', event => { const el = overSquare(event); if (el) showAgePop(el); });
   document.addEventListener('focusout', event => { if (overSquare(event)) hideAgePop(); });
+
+  /* the message text is editable; keep what was typed so re-renders do not lose it */
+  document.addEventListener('input', event => {
+    const area = event.target.closest?.('.tg-text');
+    if (!area) return;
+    const task = tgTaskById(area.closest('.tg')?.dataset.task);
+    if (task) tgDraftFor(task).text = area.value;
+  });
+  document.getElementById('tgForm')?.addEventListener('submit', event => { event.preventDefault(); saveTgDialog(); });
 
   document.addEventListener('click', async event => {
     const target = event.target;
@@ -490,6 +640,8 @@ function bindDialogs() {
     task.addEventListener('click', event => { if (event.target === task) closeTaskSheet(); });
     task.addEventListener('close', () => { state.ui.sheetTask = ''; });
   }
+  const tg = document.getElementById('tgDialog');
+  if (tg) tg.addEventListener('click', event => { if (event.target === tg) tg.close(); });
   const help = document.getElementById('helpDialog');
   if (help) help.addEventListener('click', event => { if (event.target === help) help.close(); });
 }

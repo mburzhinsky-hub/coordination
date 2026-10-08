@@ -15,6 +15,7 @@ const PALETTE_ACTIONS = [
   { id: 'acc-old', label: `Показать все приёмки старше ${CONTROL_OLD_DAYS} дней`, icon: 'bolt', route: 'inbox', arg: 'acceptance', words: 'приёмки контроль застряли' },
   { id: 'upload', label: 'Загрузить выгрузку Bitrix', icon: 'upload', fn: 'upload', words: 'обновить загрузить выгрузка файл xls' },
   { id: 'presence', label: 'Отметить, кто где сегодня', icon: 'pin', fn: 'presence', words: 'кто где присутствие офис объект отпуск' },
+  { id: 'telegram', label: 'Ники сотрудников в Telegram', icon: 'send', fn: 'telegram', words: 'телеграм telegram ники контакты написать сообщение' },
   { id: 'tv', label: 'Экран для офиса (на весь экран)', icon: 'tv', fn: 'tv', words: 'экран телевизор стена tv' },
   { id: 'fx', label: 'Эффекты: включить или выключить', icon: 'spark', fn: 'fx', words: 'анимации глич точки эффекты' },
   { id: 'help', label: 'Справка: что значат слова', icon: 'help', fn: 'help', words: 'справка помощь термины словарь' }

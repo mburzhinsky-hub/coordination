@@ -166,11 +166,44 @@ assert.equal(ageChart.lanes.find(l => l.id === 'acc').dots.find(d => d.id === '1
 assert.ok(ageChart.max >= 90 && ageChart.max <= 180);
 assert.equal(ageChart.total + ageChart.other, summarizeLoadBasis ? ageChart.total + ageChart.other : 0);
 
+// ---- Telegram: nick parsing, recipients, templates, prefilled link
+assert.equal(normalizeTgNick('@nick_four'), 'nick_four');
+assert.equal(normalizeTgNick('https://t.me/nick_four?start=1'), 'nick_four');
+assert.equal(normalizeTgNick('t.me/nick_four'), 'nick_four');
+assert.equal(normalizeTgNick('max'), '');
+assert.equal(normalizeTgNick('Максим'), '');
+assert.equal(normalizeTgNick('9nick_four'), '');
+assert.equal(matchRosterPerson('Храпугин'), 'Дмитрий Храпугин');
+assert.equal(matchRosterPerson('Храпугин Дмитрий'), 'Дмитрий Храпугин');
+assert.equal(matchRosterPerson('Виденеев'), 'Игорь Виденнев');
+assert.equal(matchRosterPerson('Иван'), 'Иван Чуманов');
+assert.equal(matchRosterPerson('Неизвестный Человек'), '');
+const tgList = parseTgList('Храпугин — @nick_one\\nСемён Онищенко t.me/nick_two\\nпросто текст\\nnick_three');
+assert.equal(tgList.length, 3);
+assert.deepEqual([tgList[0].name, tgList[0].nick], ['Дмитрий Храпугин', 'nick_one']);
+assert.deepEqual([tgList[1].name, tgList[1].nick], ['Семён Онищенко', 'nick_two']);
+assert.deepEqual([tgList[2].name, tgList[2].nick], ['', 'nick_three']);
+const tgTask = t10;
+const tgWho = telegramRecipients(tgTask);
+assert.ok(tgWho.length >= 1 && tgWho[0].role === 'мяч');
+assert.equal(new Set(tgWho.map(r => personKey(r.name))).size, tgWho.length);
+assert.equal(defaultTelegramTemplate(tgTask), 'check');
+for (const tpl of TG_TEMPLATES) {
+  const text = buildTelegramText(tpl.id, tgTask, tgWho[0].name);
+  assert.ok(text.startsWith(firstNameOf(tgWho[0].name) + ', привет!'), text);
+  assert.ok(text.includes('№' + tgTask.id) && text.includes('«'), text);
+}
+assert.match(buildTelegramText('check', tgTask, tgWho[0].name), /86 дней назад/);
+const tgUrl = telegramUrl('nick_four', 'Привет, проверь №10 & «задачу»');
+assert.ok(tgUrl.startsWith('https://t.me/nick_four?text='));
+assert.equal(decodeURIComponent(tgUrl.split('?text=')[1]), 'Привет, проверь №10 & «задачу»');
+assert.equal(decodeURIComponent(telegramUrl('nick_four', '@all').split('?text=')[1]), ' @all');
+
 // ---- search
 const found = searchEntities(s0, 'бахр');
 assert.equal(found.projects[0].id, 'bakhrushin');
 assert.equal(searchEntities(s0, '').tasks.length, 0);
 assert.ok(searchEntities(s0, 'виденеев').people.length === 1);
 
-console.log('PASS: briefing — freshness, acceptance, inbox decisions, stories, since-snapshot, similar tasks, people matrix, projects, horizon, search');
+console.log('PASS: briefing — freshness, acceptance, inbox decisions, stories, since-snapshot, similar tasks, people matrix, projects, horizon, Telegram drafts, search');
 `, Object.assign(context, { __assert: assert }));

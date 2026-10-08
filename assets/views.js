@@ -276,6 +276,33 @@ function chainHtml(task) {
     <div class="chain-node"><small>Наблюдатели</small>${observers.length ? `<div class="obs">${observers.slice(0, 4).map(o => `<span class="obs-p">${avatarHtml(canonicalItoName(o) || o, 26)}<b>${escapeHtml(shortName(canonicalItoName(o) || o))}</b></span>`).join('')}${observers.length > 4 ? `<span class="muted">+${observers.length - 4}</span>` : ''}</div>` : '<span class="muted">нет</span>'}</div></div>`;
 }
 
+/** "Написать": pick who has the ball, pick what to say, open Telegram with the text already in the input. No element ids: pane and sheet may both show it. */
+function tgSectionHtml(task) {
+  if (state.historyMode) return '';
+  const recipients = telegramRecipients(task);
+  if (!recipients.length) return '';
+  const draft = tgDraftFor(task);
+  const nicks = state.telegram?.people || {};
+  const nick = nicks[draft.who] || '';
+  const who = recipients.map(r => {
+    const on = personKey(r.name) === personKey(draft.who);
+    return `<button type="button" class="tg-chip" data-action="tg-who" data-person="${escapeAttr(r.name)}" aria-pressed="${on}">${avatarHtml(r.name, 22)}<span>${escapeHtml(shortName(r.name))}</span><small>${r.role}${nicks[r.name] ? '' : ' · нет ника'}</small></button>`;
+  }).join('');
+  const templates = TG_TEMPLATES.map(t => `<button type="button" class="tg-chip tg-tpl" data-action="tg-tpl" data-tpl="${t.id}" aria-pressed="${t.id === draft.tpl}">${escapeHtml(t.label)}</button>`).join('');
+  const send = nick
+    ? `<button type="button" class="btn btn-dark" data-action="tg-send">${icon('send')}Написать ${escapeHtml(shortName(draft.who))}</button>`
+    : `<button type="button" class="btn btn-dark" data-action="tg-nick" data-person="${escapeAttr(draft.who)}">${icon('send')}Указать ник: ${escapeHtml(shortName(draft.who))}</button>`;
+  const hint = nick
+    ? `Откроется чат с @${escapeHtml(nick)}, текст уже в поле ввода. Он же скопирован в буфер. Отправляете вы сами.`
+    : 'Ник нужен один раз: после этого кнопка сразу откроет чат с готовым текстом. Пока можно скопировать текст.';
+  return `<section class="td-sec tg" data-task="${escapeAttr(task.id)}"><h4>Написать в Telegram</h4>
+    <div class="tg-row" role="group" aria-label="Кому написать">${who}</div>
+    <div class="tg-row" role="group" aria-label="О чём написать">${templates}</div>
+    <textarea class="tg-text" rows="5" aria-label="Текст сообщения" spellcheck="true">${escapeHtml(draft.text)}</textarea>
+    <div class="tg-actions">${send}<button type="button" class="btn btn-ghost" data-action="tg-copy">${icon('copy')}Скопировать текст</button>${nick ? `<button type="button" class="btn btn-quiet btn-sm" data-action="tg-nick" data-person="${escapeAttr(draft.who)}">Сменить ник</button>` : ''}</div>
+    <p class="tg-note muted">${hint}</p></section>`;
+}
+
 function taskDetailHtml(task, b, opts = {}) {
   const snapshot = b.snapshot;
   const timeline = taskTimeline(task, snapshot, state.snapshots);
@@ -290,6 +317,7 @@ function taskDetailHtml(task, b, opts = {}) {
     ${item ? inboxActionsHtml(item) : ''}
     ${lifecycleHtml(task)}
     <section class="td-sec"><h4>Чей ход ${termHtml('ball')}</h4>${chainHtml(task)}</section>
+    ${tgSectionHtml(task)}
     <section class="td-sec"><h4>История срока</h4>${deadlineHistory.length ? deadlineHistory.map(h => `<p class="dl"><span class="tag tag-amber">${escapeHtml(h.value ? dayMonthShort(h.value) : 'без срока')}</span> срок переносили, перенос зафиксирован ${escapeHtml(dayMonthShort(h.at))}</p>`).join('') : `<p class="dl">${task.deadline ? `<span class="tag ${task.overdue ? 'tag-red' : ''}">${escapeHtml(dayMonthShort(task.deadline))}</span> срок не переносился${task.overdue ? ` · просрочка ${shortDays(task.overdueDays)}` : ''}` : 'Срок не задан'}</p>`}</section>
     <section class="td-sec"><h4>Лента событий</h4><ul class="tl">${timeline.map(e => `<li class="tl-${e.tone}"><span class="tl-ico">${icon(e.icon)}</span><span class="tl-body"><b>${escapeHtml(e.title)}</b>${e.text ? `<small>${escapeHtml(e.text)}</small>` : ''}</span><span class="tl-when">${escapeHtml(e.when || '')}</span></li>`).join('')}</ul></section>
     ${desc ? `<details class="td-sec td-desc"><summary>Описание из Bitrix</summary><div class="td-desc-body">${escapeHtml(desc)}</div></details>` : ''}

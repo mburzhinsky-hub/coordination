@@ -440,6 +440,96 @@ function filterInbox(inbox, filter) {
 
 /* ---------- debt audit ---------- */
 
+/* ---------- Telegram messages: who to write to and what to say ---------- */
+
+const TG_TEMPLATES = [
+  { id: 'check', label: 'Проверить' },
+  { id: 'do', label: 'Сделать' },
+  { id: 'status', label: 'Что со сроком?' },
+  { id: 'close', label: 'Закрываем?' }
+];
+
+/** Telegram nickname from "@name", "t.me/name" or "https://t.me/name?x=1". Empty string when it is not valid. */
+function normalizeTgNick(input) {
+  let v = String(input || '').trim();
+  v = v.replace(/^https?:\/\//i, '').replace(/^(www\.)?(t\.me|telegram\.me)\//i, '').replace(/^@/, '').split(/[?\/#]/)[0];
+  return /^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(v) ? v : '';
+}
+
+/** Roster member for a loose name ("Храпугин", "Дмитрий Храпугин", "Храпугин Дмитрий"). Empty when unknown or ambiguous. */
+function matchRosterPerson(text) {
+  const exact = canonicalItoName(text);
+  if (exact) return exact;
+  const words = personKey(text).split(' ').filter(Boolean);
+  if (!words.length) return '';
+  const hits = ITO_ROSTER.filter(name => {
+    const pool = new Set([...personKey(name).split(' '), ...personKey(displayName(name)).split(' ')]);
+    return words.every(w => pool.has(w));
+  });
+  return hits.length === 1 ? hits[0] : '';
+}
+
+/** Pasted list, one person per line ("Храпугин — @nick", "Семён Онищенко t.me/nick"). Lines with neither a person nor a nick are skipped. */
+function parseTgList(text) {
+  return String(text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => {
+    const hit = /(?:https?:\/\/)?(?:t\.me|telegram\.me)\/[A-Za-z0-9_]+/i.exec(line) || /@[A-Za-z][A-Za-z0-9_]{4,31}/.exec(line) || /\b[A-Za-z][A-Za-z0-9_]{4,31}\b/.exec(line);
+    const nick = hit ? normalizeTgNick(hit[0]) : '';
+    const rest = hit ? line.replace(hit[0], ' ') : line;
+    return { line, nick, name: matchRosterPerson(rest.replace(/[—–\-:;,|()\t]+/g, ' ')) };
+  }).filter(row => row.nick || row.name);
+}
+
+function telegramRecipients(task) {
+  const out = [];
+  const add = (name, role) => {
+    if (!name) return;
+    const canon = canonicalItoName(name) || name;
+    const found = out.find(r => personKey(r.name) === personKey(canon));
+    if (found) { if (role === 'мяч' && found.role !== 'мяч') found.role = 'мяч'; return; }
+    out.push({ name: canon, role });
+  };
+  (task.ballOwner?.people || []).forEach(n => add(n, 'мяч'));
+  add(task.responsible, 'исполнитель');
+  add(task.author, 'постановщик');
+  return out;
+}
+
+function defaultTelegramTemplate(task) {
+  if (task.isWaitingControl) return 'check';
+  if (task.overdue) return 'status';
+  if (task.debt && task.debt !== 'none') return 'close';
+  return 'do';
+}
+
+function firstNameOf(name) { return String(displayName(name) || '').split(/\s+/)[0] || ''; }
+
+function buildTelegramText(templateId, task, recipientName) {
+  const hello = firstNameOf(recipientName);
+  const title = `«${shortLabel(String(task.title || '').trim(), 90)}» (№${task.id})`;
+  const due = task.deadline ? dayMonthShort(task.deadline) : '';
+  let body;
+  if (templateId === 'check') {
+    const waited = task.waitingControlDays || 0;
+    body = waited
+      ? `По задаче ${title} исполнитель сдал работу ${daysWord(waited)} назад, она ждёт проверки. Посмотри, пожалуйста: принять или вернуть с комментарием.`
+      : `Посмотри, пожалуйста, задачу ${title}: нужно проверить результат, принять или вернуть с комментарием.`;
+  } else if (templateId === 'status') {
+    const state = !task.deadline ? 'срок не задан' : task.overdue ? `срок был ${due}, просрочка ${daysWord(task.overdueDays || 0)}` : `срок ${due}`;
+    body = `По задаче ${title} ${state}. Что по ней: делаем, переносим или закрываем? Напиши статус и новую дату, если она нужна.`;
+  } else if (templateId === 'close') {
+    const quiet = task.inactivityDays || 0;
+    body = `Задача ${title} без движения ${daysWord(quiet)}. Она ещё нужна? Если да, поставь срок и ответственного, если нет, давай закроем.`;
+  } else {
+    body = `Прошу взять в работу задачу ${title}${due ? `, срок ${due}` : ''}. Подтверди, что видишь её, и напиши, когда сможешь сделать.`;
+  }
+  return `${hello ? `${hello}, привет! ` : ''}${body}`;
+}
+
+function telegramUrl(nick, text) {
+  const t = String(text || '');
+  return `https://t.me/${nick}?text=${encodeURIComponent(t.startsWith('@') ? ' ' + t : t)}`;
+}
+
 /** Open tasks as dots on an age axis: acceptance by days waiting, the rest by days without movement. */
 const AGE_LANES = [
   { id: 'acc', label: 'Приёмка' },

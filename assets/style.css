@@ -779,3 +779,35 @@ html[data-fx="on"] .agq { animation: dotin .45s cubic-bezier(.2, .8, .2, 1) both
 }
 
 body { background-image: radial-gradient(rgba(20, 20, 15, .075) 1px, transparent 1.3px); background-size: 22px 22px; background-attachment: fixed; }
+
+/* ---------- Telegram: compose block and nickname dialog ---------- */
+.tg-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.tg-chip { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 4px 12px 4px 5px; border-radius: 99px; border: 1px solid var(--line); background: var(--fill); font-size: 12.5px; font-weight: 600; transition: background .15s, border-color .15s, color .15s; }
+.tg-chip.tg-tpl { padding: 4px 14px; }
+.tg-chip small { color: var(--ink3); font-weight: 600; font-size: 11px; }
+.tg-chip:hover { background: #fff; border-color: #cfcdc3; }
+.tg-chip[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #fff; }
+.tg-chip[aria-pressed="true"] small { color: #cfcdc3; }
+.tg-text { display: block; width: 100%; min-height: 112px; max-height: 46dvh; field-sizing: content; resize: vertical; border: 1px solid var(--line); border-radius: 14px; background: #fff; padding: 12px 14px; font: inherit; font-size: 13.5px; line-height: 1.5; color: var(--ink); }
+.tg-text:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.tg-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+.tg-note { font-size: 12.5px; margin-top: 8px; line-height: 1.45; }
+dialog.tg-dialog { width: min(600px, 94vw); overflow: hidden; }
+.tg-dialog .modal-card { max-height: 90dvh; grid-template-rows: auto auto minmax(0, 1fr) auto; }
+.tg-bulk { border: 1px solid var(--line); border-radius: 14px; background: var(--fill); padding: 0 14px; }
+.tg-bulk summary { cursor: pointer; padding: 11px 0; font-weight: 600; font-size: 13px; color: var(--ink2); }
+.tg-bulk textarea { display: block; width: 100%; border: 1px solid var(--line); border-radius: 12px; background: #fff; padding: 10px 12px; font: inherit; font-size: 13px; line-height: 1.5; resize: vertical; }
+.tg-bulk-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 0 14px; font-size: 12.5px; }
+.tg-list { display: grid; align-content: start; gap: 4px; min-height: 0; overflow: auto; border: 1px solid var(--line); border-radius: 16px; padding: 6px 12px; }
+.tg-item { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 190px); align-items: center; gap: 4px 12px; padding: 7px 0; border-top: 1px solid var(--line2); }
+.tg-item:first-child { border-top: 0; }
+.tg-item-name { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 13.5px; }
+.tg-item-name b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.tg-input { width: 100%; height: 38px; border: 1px solid var(--line); border-radius: 10px; background: #fff; padding: 0 12px; font: inherit; font-size: 13.5px; }
+.tg-input[aria-invalid="true"] { border-color: var(--red); background: var(--red-s); }
+.tg-err { grid-column: 1 / -1; color: var(--red-t); font-size: 12px; }
+@media (max-width: 520px) {
+  .tg-text { min-height: 168px; }
+  .tg-item { grid-template-columns: 1fr; }
+  .tg-actions .btn { flex: 1 1 100%; }
+}

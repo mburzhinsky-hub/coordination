@@ -270,6 +270,7 @@ async function syncSharedState() {
     const snapshotChanged = !state.latestSnapshot || latest.id !== state.latestSnapshot.id;
     state.latestSnapshot = latest;
     state.triage = await loadTriage();
+    state.telegram = await loadTelegram();
     if (!state.historyMode) {
       state.currentSnapshot = latest;
       state.presence = await loadPresence(latest.id) || { people: {} };
