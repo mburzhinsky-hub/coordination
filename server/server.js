@@ -8,7 +8,10 @@ const crypto = require('node:crypto');
 
 const ROOT = path.resolve(__dirname, '..');
 const CONFIG_PATH = path.join(__dirname, 'config.local.json');
-const ALLOWED_STORES = new Set(['snapshots', 'presence', 'sources', 'settings']);
+const ALLOWED_STORES = new Set(['snapshots', 'presence', 'sources', 'settings', 'council', 'councilfiles']);
+/* Stores whose records carry a "rev" and are written only through /api/council/batch with an expected revision (optimistic locking). */
+const REVISIONED_STORES = new Set(['council']);
+const MAX_BATCH_WRITES = 600;
 const MAX_BODY_BYTES = 30 * 1024 * 1024;
 
 function readConfig() {
@@ -155,6 +158,40 @@ async function writeRecord(store, key, value) {
   });
 }
 
+/**
+ * All-or-nothing write of several council records. Every record that lives in a revisioned store comes with the revision the client
+ * based its change on (0 = "must not exist yet"). If any of them moved on, nothing is written and the current versions go back to the client,
+ * which merges and retries. Content-addressed file records are written as they are.
+ */
+async function writeCouncilBatch(writes) {
+  return enqueueWrite(async () => {
+    const conflicts = [];
+    const plan = [];
+    for (const w of writes) {
+      if (!REVISIONED_STORES.has(w.store)) { plan.push({ ...w, rev: 0 }); continue; }
+      const current = await readRecord(w.store, w.key);
+      const currentRev = current ? Number(current.rev || 0) : 0;
+      const expected = Number(w.expectedRev || 0);
+      if (current && expected === 0 && !w.delete) { conflicts.push({ store: w.store, key: w.key, expected, current }); continue; }
+      if (currentRev !== expected) { conflicts.push({ store: w.store, key: w.key, expected, current }); continue; }
+      plan.push({ ...w, rev: expected + 1 });
+    }
+    if (conflicts.length) return { ok: false, conflicts };
+    const revs = {};
+    for (const w of plan) {
+      if (w.delete) {
+        try { await fsp.unlink(recordPath(w.store, w.key)); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+        continue;
+      }
+      const value = REVISIONED_STORES.has(w.store) ? { ...w.value, rev: w.rev, savedAt: new Date().toISOString() } : w.value;
+      await atomicWriteJson(recordPath(w.store, w.key), value);
+      revs[w.key] = w.rev;
+    }
+    const revision = await bumpRevision();
+    return { ok: true, revs, revision };
+  });
+}
+
 async function deleteRecord(store, key) {
   return enqueueWrite(async () => {
     try {
@@ -193,6 +230,7 @@ function parseApi(url) {
   if (parts[0] !== 'api') return null;
   if (parts[1] === 'health') return { type: 'health' };
   if (parts[1] === 'revision') return { type: 'revision' };
+  if (parts[1] === 'council' && parts[2] === 'batch') return { type: 'council-batch' };
   if (parts[1] !== 'store' || !parts[2]) return { type: 'invalid' };
   const store = decodeURIComponent(parts[2]);
   const key = parts.length > 3 ? decodeURIComponent(parts.slice(3).join('/')) : null;
@@ -214,12 +252,33 @@ async function handleApi(req, res, url) {
     sendJson(res, 200, { revision }, revision);
     return true;
   }
+  if (api.type === 'council-batch') {
+    if (req.method !== 'POST') { sendText(res, 405, 'Method not allowed'); return true; }
+    const body = await readBody(req);
+    const writes = Array.isArray(body?.writes) ? body.writes : null;
+    if (!writes || !writes.length || writes.length > MAX_BATCH_WRITES) { sendText(res, 400, 'Bad batch'); return true; }
+    for (const w of writes) {
+      if (!w || !['council', 'councilfiles'].includes(w.store) || typeof w.key !== 'string' || !w.key || w.key.length > 200) { sendText(res, 400, 'Bad batch entry'); return true; }
+      if (w.delete && w.store !== 'councilfiles') { sendText(res, 400, 'Only files can be deleted'); return true; }
+      if (!w.delete && (typeof w.value !== 'object' || w.value === null || w.value.id !== w.key)) { sendText(res, 400, 'Record id must equal its key'); return true; }
+    }
+    const outcome = await writeCouncilBatch(writes);
+    if (!outcome.ok) { sendJson(res, 409, { ok: false, conflicts: outcome.conflicts }, await readRevision()); return true; }
+    sendJson(res, 200, { ok: true, revs: outcome.revs }, outcome.revision);
+    return true;
+  }
   if (api.type !== 'store' || !ALLOWED_STORES.has(api.store)) {
     sendText(res, 404, 'Unknown API route');
     return true;
   }
 
   const revision = await readRevision();
+
+  /* revisioned records change only through the batch endpoint, so an old or foreign client cannot overwrite them blindly */
+  if (REVISIONED_STORES.has(api.store) && (req.method === 'PUT' || req.method === 'DELETE')) {
+    sendText(res, 405, 'Use /api/council/batch for this store');
+    return true;
+  }
 
   if (req.method === 'GET' && !api.key) {
     sendJson(res, 200, await listStore(api.store), revision);

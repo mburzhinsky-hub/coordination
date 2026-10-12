@@ -97,6 +97,7 @@ function viewProjects(b) {
           ${silentDays != null && silentDays > 14 && card.counts.open ? `<span class="pill pill-watch">${sevIcon('watch', 14)}проект молчит: последняя правка ${shortDays(silentDays)} назад</span>` : ''}
           <span class="pill pill-neutral">${card.conflicts} ${pluralRu(card.conflicts, 'конфликт', 'конфликта', 'конфликтов')} проекта</span></div></header>
         <div class="stats">${stat('В работе', card.counts.live)}${stat('Приёмка', card.counts.acceptance, card.counts.acceptance ? 'blue' : '')}${stat('Сигналы', card.counts.signals, card.counts.signals ? 'red' : '')}${stat('Долг', card.counts.debt)}${stat('Последнее движение', card.lastMovement ? `<span class="stat-text">${dayMonth(card.lastMovement)}</span><small>${silentDays === 0 ? 'сегодня' : shortDays(silentDays) + ' назад'}</small>` : '<span class="stat-text">нет</span>')}</div>
+        ${typeof councilProjectCardHtml === 'function' ? councilProjectCardHtml(card.id) : ''}
         <section class="card tl-card"><header class="card-head"><h2>Горизонт проекта</h2><p class="muted">сроки задач, одинаковые схлопнуты в группу</p></header>${projectTimelineHtml(card, snapshot)}</section>
         <section class="card kan-card"><header class="card-head"><h2>Задачи по состоянию</h2></header>
           <div class="kanban">

@@ -138,6 +138,9 @@ function openLocalDb() {
       if (!db.objectStoreNames.contains('presence')) db.createObjectStore('presence', { keyPath: 'snapshotId' });
       if (!db.objectStoreNames.contains('sources')) db.createObjectStore('sources', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings', { keyPath: 'id' });
+      /* version 2: the tech council keeps its own stores, apart from Bitrix snapshots; nothing existing is touched */
+      if (!db.objectStoreNames.contains('council')) db.createObjectStore('council', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('councilfiles')) db.createObjectStore('councilfiles', { keyPath: 'id' });
     };
     request.onsuccess = () => resolve(request.result);
   });
@@ -265,6 +268,7 @@ async function syncSharedState() {
     if (revision === state.sharedRevision) return;
     state.sharedRevision = revision;
     await refreshSnapshots();
+    if (typeof councilOnSharedChange === 'function') await councilOnSharedChange();
     if (!state.snapshots.length) return;
     const latest = state.snapshots[state.snapshots.length - 1];
     const snapshotChanged = !state.latestSnapshot || latest.id !== state.latestSnapshot.id;
@@ -276,6 +280,7 @@ async function syncSharedState() {
       state.presence = await loadPresence(latest.id) || { people: {} };
     }
     state.roster = await loadRoster();
+    if (typeof isCouncilRoute === 'function' && isCouncilRoute()) { if (snapshotChanged) showSyncFlash('Получен новый общий срез'); return; }
     renderCurrentView({ soft: !snapshotChanged });
     if (snapshotChanged) showSyncFlash('Получен новый общий срез');
   } catch (error) {
