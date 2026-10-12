@@ -8,7 +8,8 @@ const PALETTE_SCREENS = [
   { id: 'projects', label: 'Проекты', hint: 'Девять объектов', icon: 'folder', words: 'проекты объекты' },
   { id: 'horizon', label: 'Горизонт', hint: 'Сроки на недели вперёд', icon: 'cal', words: 'горизонт сроки план календарь' },
   { id: 'debt', label: 'Ревизия долга', hint: 'Закрыть, списать, вернуть', icon: 'layers', words: 'ревизия долг списать' },
-  { id: 'history', label: 'История срезов', hint: 'Машина времени', icon: 'rewind', words: 'история срезы машина времени сравнить' }
+  { id: 'history', label: 'История срезов', hint: 'Машина времени', icon: 'rewind', words: 'история срезы машина времени сравнить' },
+  { id: 'council', label: 'Техсовет', hint: 'Поручения и заседания', icon: 'council', words: 'техсовет совет поручения реестр заседание протокол решения' }
 ];
 
 const PALETTE_ACTIONS = [
@@ -18,6 +19,8 @@ const PALETTE_ACTIONS = [
   { id: 'telegram', label: 'Ники сотрудников в Telegram', icon: 'send', fn: 'telegram', words: 'телеграм telegram ники контакты написать сообщение' },
   { id: 'tv', label: 'Экран для офиса (на весь экран)', icon: 'tv', fn: 'tv', words: 'экран телевизор стена tv' },
   { id: 'fx', label: 'Эффекты: включить или выключить', icon: 'spark', fn: 'fx', words: 'анимации глич точки эффекты' },
+  { id: 'council-agenda', label: 'Повестка техсовета', icon: 'council', route: 'council', arg: 'agenda', words: 'повестка техсовет вопросы совет' },
+  { id: 'council-import', label: 'Загрузить реестр поручений (.xlsx)', icon: 'upload', route: 'council', arg: 'import', words: 'реестр поручений загрузить импорт xlsx excel техсовет' },
   { id: 'help', label: 'Справка: что значат слова', icon: 'help', fn: 'help', words: 'справка помощь термины словарь' }
 ];
 
@@ -29,10 +32,24 @@ function paletteTaskMeta(task) {
 }
 
 /** Pure: returns groups of result descriptors for a query. */
+function paletteCouncilItems(query) {
+  const c = typeof state !== 'undefined' ? state.council : null;
+  if (!c || !c.loaded || !c.orders.length) return [];
+  return councilFilter(c.orders, { q: query, state: 'all' }).slice(0, 5).map(o => ({ kind: 'route', route: 'council', arg: 'order/' + o.orderId, title: o.title, meta: `Техсовет · ${o.no ? '№' + o.no + ' · ' : ''}${councilGroupName(o)} · ${councilState(o.state).label.toLowerCase()}`, icon: 'council' }));
+}
+
 function paletteResults(snapshot, query, triage = {}) {
   const q = normalizeHeader(query);
   const has = text => normalizeHeader(text).includes(q);
   const groups = [];
+  if (!snapshot) {
+    const screenOnly = s => ({ kind: 'route', route: s.id, title: s.label, meta: s.hint, icon: s.icon });
+    const council = q ? paletteCouncilItems(query) : [];
+    if (council.length) groups.push({ title: 'Поручения техсовета', items: council });
+    groups.push({ title: 'Экраны', items: PALETTE_SCREENS.filter(s => !q || has(s.label) || has(s.words)).filter(s => s.id === 'council').map(screenOnly) });
+    groups.push({ title: 'Действия', items: PALETTE_ACTIONS.filter(a => a.id.startsWith('council') && (!q || has(a.label) || has(a.words))).map(a => ({ kind: 'route', route: a.route, arg: a.arg, title: a.label, meta: '', icon: a.icon })) });
+    return groups.filter(g => g.items.length);
+  }
   const screenItem = s => ({ kind: 'route', route: s.id, title: s.label, meta: s.hint, icon: s.icon });
   const actionItem = a => ({ kind: a.fn ? 'fn' : 'route', fn: a.fn, route: a.route, arg: a.arg, title: a.label, meta: '', icon: a.icon });
   if (!q) {
@@ -48,6 +65,8 @@ function paletteResults(snapshot, query, triage = {}) {
     return { kind: 'route', route: 'projects', arg: p.id, title: p.name, meta: card ? `${card.counts.open} открытых · ${card.counts.acceptance} в приёмке · ${card.label.toLowerCase()}` : p.type, icon: 'folder' };
   }) });
   if (found.people.length) groups.push({ title: 'Люди', items: found.people.map(n => ({ kind: 'route', route: 'people', arg: n, title: displayName(n), meta: 'Люди и нагрузка', icon: 'user' })) });
+  const council = paletteCouncilItems(query);
+  if (council.length) groups.push({ title: 'Поручения техсовета', items: council });
   if (found.tasks.length) groups.push({ title: 'Задачи', items: found.tasks.map(t => ({ kind: 'task', id: t.id, title: t.title, meta: paletteTaskMeta(t), icon: 'check' })) });
   const screens = PALETTE_SCREENS.filter(s => has(s.label) || has(s.words));
   if (screens.length) groups.push({ title: 'Экраны', items: screens.map(screenItem) });
@@ -62,7 +81,7 @@ const paletteState = { items: [], sel: 0 };
 
 function openPalette() {
   const dialog = document.getElementById('paletteDialog');
-  if (!dialog || !state.currentSnapshot) return;
+  if (!dialog || (!state.currentSnapshot && !isCouncilRoute())) return;
   if (!dialog.open) dialog.showModal();
   const input = document.getElementById('paletteInput');
   input.value = '';

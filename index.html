@@ -7,7 +7,8 @@
   <title>ИТО — Координация</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 36 36'%3E%3Cg fill='%2314140F'%3E%3Ccircle cx='18' cy='6' r='2'/%3E%3Ccircle cx='10' cy='10' r='2'/%3E%3Ccircle cx='26' cy='10' r='2'/%3E%3Ccircle cx='6' cy='18' r='2'/%3E%3Ccircle cx='18' cy='18' r='2'/%3E%3Ccircle cx='30' cy='18' r='2'/%3E%3Ccircle cx='10' cy='26' r='2'/%3E%3Ccircle cx='26' cy='26' r='2'/%3E%3Ccircle cx='18' cy='30' r='2'/%3E%3C/g%3E%3C/svg%3E" />
   <link rel="preload" href="assets/fonts/inter-cyrillic-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
-  <link rel="stylesheet" href="assets/style.css?v=20261009tg1" />
+  <link rel="stylesheet" href="assets/style.css?v=20261012ts1" />
+  <link rel="stylesheet" href="assets/council.css?v=20261012ts1" />
 </head>
 <body>
   <a class="skip" href="#viewRoot">К содержимому</a>
@@ -32,6 +33,13 @@
   <div class="drop-veil" id="dropVeil" hidden><div><b>Отпустите файл</b><span>Выгрузка задач из Bitrix (.xls)</span></div></div>
   <div id="tvRoot" class="tv" hidden></div>
   <div id="toastRoot" class="toast-root" aria-live="polite"></div>
+  <div id="councilMeeting" class="cs-meeting" hidden></div>
+  <input id="councilFileInput" class="visually-hidden" type="file" accept=".xlsx" tabindex="-1" />
+  <input id="councilAttachInput" class="visually-hidden" type="file" tabindex="-1" />
+
+  <dialog id="councilDialog" class="modal cs-dialog" aria-label="Техсовет">
+    <div class="modal-card" id="councilDialogBody"></div>
+  </dialog>
 
   <dialog id="taskDialog" class="sheet" aria-label="Задача">
     <div class="sheet-bar"><button class="icon-btn" type="button" data-action="sheet-close" aria-label="Закрыть"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
@@ -101,23 +109,31 @@
       <div id="helpBody" class="help-body"></div>
       <div class="help-keys">
         <b>Клавиши</b>
-        <p><kbd class="kbd">⌘K</kbd> или <kbd class="kbd">/</kbd> поиск и команды · <kbd class="kbd">1</kbd>–<kbd class="kbd">7</kbd> разделы · <kbd class="kbd">J</kbd> <kbd class="kbd">K</kbd> по очереди · <kbd class="kbd">A</kbd> назначить · <kbd class="kbd">S</kbd> позже · <kbd class="kbd">E</kbd> эскалация · <kbd class="kbd">⏎</kbd> готово. Буквы работают и в русской раскладке.</p>
+        <p><kbd class="kbd">⌘K</kbd> или <kbd class="kbd">/</kbd> поиск и команды · <kbd class="kbd">1</kbd>–<kbd class="kbd">8</kbd> разделы · <kbd class="kbd">J</kbd> <kbd class="kbd">K</kbd> по очереди · <kbd class="kbd">A</kbd> назначить · <kbd class="kbd">S</kbd> позже · <kbd class="kbd">E</kbd> эскалация · <kbd class="kbd">⏎</kbd> готово. Буквы работают и в русской раскладке.</p>
       </div>
     </div>
   </dialog>
 
-  <script src="assets/briefing.js?v=20261009tg1"></script>
-  <script src="assets/kit.js?v=20261009tg1"></script>
-  <script src="assets/fx.js?v=20261009tg1"></script>
-  <script src="assets/views.js?v=20261009tg1"></script>
-  <script src="assets/views2.js?v=20261009tg1"></script>
-  <script src="assets/palette.js?v=20261009tg1"></script>
-  <script src="assets/ui.js?v=20261009tg1"></script>
-  <script src="assets/upload.js?v=20261009tg1"></script>
-  <script src="assets/normalize.js?v=20261009tg1"></script>
-  <script src="assets/model.js?v=20261009tg1"></script>
-  <script src="assets/storage.js?v=20261009tg1"></script>
-  <script src="assets/helpers.js?v=20261009tg1"></script>
-  <script src="assets/app.js?v=20261009tg1"></script>
+  <script src="assets/briefing.js?v=20261012ts1"></script>
+  <script src="assets/kit.js?v=20261012ts1"></script>
+  <script src="assets/fx.js?v=20261012ts1"></script>
+  <script src="assets/views.js?v=20261012ts1"></script>
+  <script src="assets/views2.js?v=20261012ts1"></script>
+  <script src="assets/palette.js?v=20261012ts1"></script>
+  <script src="assets/ui.js?v=20261012ts1"></script>
+  <script src="assets/upload.js?v=20261012ts1"></script>
+  <script src="assets/normalize.js?v=20261012ts1"></script>
+  <script src="assets/model.js?v=20261012ts1"></script>
+  <script src="assets/storage.js?v=20261012ts1"></script>
+  <script src="assets/helpers.js?v=20261012ts1"></script>
+  <script src="assets/xlsx.js?v=20261012ts1"></script>
+  <script src="assets/council.js?v=20261012ts1"></script>
+  <script src="assets/council-ops.js?v=20261012ts1"></script>
+  <script src="assets/council-agenda.js?v=20261012ts1"></script>
+  <script src="assets/council-store.js?v=20261012ts1"></script>
+  <script src="assets/council-views.js?v=20261012ts1"></script>
+  <script src="assets/council-meeting.js?v=20261012ts1"></script>
+  <script src="assets/app.js?v=20261012ts1"></script>
+  <script src="assets/council-app.js?v=20261012ts1"></script>
 </body>
 </html>

@@ -2,3 +2,8 @@
 Thumbs.db
 shared-data/
 server/config.local.json
+
+# Registry exports with real work data must never be committed
+*.xlsx
+!tests/fixtures/*.xlsx
+tests/private/

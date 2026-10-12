@@ -8,7 +8,8 @@ const ROUTES = {
   projects: { title: 'Проекты', subtitle: 'Девять объектов' },
   horizon: { title: 'Горизонт', subtitle: 'Сроки на ближайшие недели' },
   debt: { title: 'Ревизия долга', subtitle: 'Закрыть, списать или вернуть' },
-  history: { title: 'История срезов', subtitle: 'Что менялось между выгрузками' }
+  history: { title: 'История срезов', subtitle: 'Что менялось между выгрузками' },
+  council: { title: 'Техсовет', subtitle: 'Поручения, повестка и решения заседаний' }
 };
 
 function fmtDM(value) { const d = new Date(value); return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}`; }

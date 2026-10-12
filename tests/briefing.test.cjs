@@ -1,15 +1,10 @@
 const { readFileSync } = require('node:fs');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
+const { createContext } = require('./support/load.cjs');
 
-const context = vm.createContext({
-  console,
-  window: { addEventListener() {} },
-  localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
-  Date, Intl, Math, JSON, Set, Map
-});
-const files = ['assets/briefing.js', 'assets/kit.js', 'assets/fx.js', 'assets/views.js', 'assets/views2.js', 'assets/palette.js', 'assets/app.js', 'assets/ui.js', 'assets/upload.js', 'assets/normalize.js', 'assets/model.js', 'assets/storage.js', 'assets/helpers.js'];
-for (const file of files) vm.runInContext(readFileSync(file, 'utf8'), context, { filename: file });
+// Same scripts, same order as index.html.
+const context = createContext();
 
 vm.runInContext(`
 const assert = globalThis.__assert;

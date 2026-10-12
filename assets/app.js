@@ -1,7 +1,7 @@
 'use strict';
 
 const DB_NAME = 'coordination.daily.v2';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const LEGACY_EXPORTS_KEY = 'bitrixTaskDashboard.localExports.v1';
 const CONTROL_WATCH_DAYS = 3;
 const CONTROL_CRITICAL_DAYS = 5;
@@ -88,6 +88,7 @@ const state = {
   roster: [],
   triage: {},
   telegram: { people: {} },
+  council: councilBlank(),
   pendingPresence: null,
   pendingPresenceSnapshotId: null,
   busy: false,
@@ -123,7 +124,13 @@ async function init() {
     else await migrateLegacyExports();
     await seedRepositorySnapshots();
     await refreshSnapshots();
+    await councilInit();
+    startSharedSync();
+    startClock();
     if (!state.snapshots.length) {
+      /* no Bitrix data yet: the tech council works on its own */
+      if (!location.hash && state.council.orders.length) location.hash = '#/council';
+      if (parseRoute().name === 'council') { applyRoute(parseRoute(), { first: true }); return; }
       renderEmpty();
       return;
     }
@@ -134,8 +141,6 @@ async function init() {
     state.triage = await loadTriage();
     state.telegram = await loadTelegram();
     applyRoute(parseRoute(), { first: true });
-    startSharedSync();
-    startClock();
   } catch (error) {
     console.error(error);
     renderError(error.message || String(error));
@@ -152,6 +157,7 @@ function renderChrome() {
       <p class="rail-group">Сейчас</p>${link('today', 'Сегодня', 'today')}${link('inbox', 'Входящие', 'alert', 'badgeInbox')}
       <p class="rail-group">Отдел</p>${link('people', 'Люди и нагрузка', 'users')}${link('projects', 'Проекты', 'folder')}${link('horizon', 'Горизонт', 'cal')}
       <p class="rail-group">Ритуалы</p>${link('debt', 'Ревизия долга', 'layers', 'badgeDebt')}${link('history', 'История срезов', 'rewind')}
+      <p class="rail-group">Управление</p>${link('council', 'Техсовет', 'council', 'badgeCouncil')}
     </nav>
     <div class="rail-foot">
       <div class="rail-card">
@@ -178,6 +184,7 @@ function renderChrome() {
     <a data-route="inbox" href="#/inbox">${icon('alert')}<span>Входящие</span><i id="tabBadgeInbox" class="badge badge-red" hidden></i></a>
     <a data-route="people" href="#/people">${icon('users')}<span>Люди</span></a>
     <a data-route="projects" href="#/projects">${icon('folder')}<span>Проекты</span></a>
+    <a data-route="council" href="#/council">${icon('council')}<span>Техсовет</span><i id="tabBadgeCouncil" class="badge badge-red" hidden></i></a>
     <button type="button" data-action="palette-open">${icon('more')}<span>Ещё</span></button>`;
   syncFxToggle();
 }
@@ -210,7 +217,7 @@ function navigate(name, arg = '') {
 }
 
 function applyRoute(route, opts = {}) {
-  if (!state.currentSnapshot) return;
+  if (!state.currentSnapshot && route.name !== 'council') return;
   if (route.name === 'tv') { openTv(); return; }
   if (state.tvOpen) closeTv(false);
   const previous = state.route;
@@ -236,6 +243,7 @@ function switchView(view) { navigate(view || 'today'); }
 /* ---------- render ---------- */
 
 function renderCurrentView(opts = {}) {
+  if (state.route.name === 'council') { renderCouncilView(opts); return; }
   const snapshot = state.currentSnapshot;
   if (!snapshot) { renderEmpty(); return; }
   const root = document.getElementById('viewRoot');
@@ -691,6 +699,7 @@ function isTyping(target) { return target && (target.closest?.('input, textarea,
 function onKeydown(event) {
   const mod = event.metaKey || event.ctrlKey;
   if (mod && event.code === 'KeyK') { event.preventDefault(); if (document.getElementById('paletteDialog').open) closePalette(); else openPalette(); return; }
+  if (document.body.classList.contains('cs-meeting-open')) return;
   if (isTyping(event.target)) return;
   if (state.tvOpen) {
     if (event.key === 'Escape') { event.preventDefault(); closeTv(true); }
@@ -699,12 +708,13 @@ function onKeydown(event) {
     return;
   }
   if (event.key === 'Escape') { hideTermPopover(); return; }
-  if (mod || event.altKey || anyDialogOpen() || !state.currentSnapshot) return;
+  if (mod || event.altKey || anyDialogOpen() || (!state.currentSnapshot && !isCouncilRoute())) return;
   if (event.key === '/') { event.preventDefault(); openPalette(); return; }
-  const screens = ['today', 'inbox', 'people', 'projects', 'horizon', 'debt', 'history'];
-  const digit = /^Digit([1-7])$/.exec(event.code);
+  const screens = ['today', 'inbox', 'people', 'projects', 'horizon', 'debt', 'history', 'council'];
+  const digit = /^Digit([1-8])$/.exec(event.code);
   if (digit) { event.preventDefault(); navigate(screens[Number(digit[1]) - 1]); return; }
   if (state.route.name !== 'today' && state.route.name !== 'inbox') return;
+  if (!state.currentSnapshot) return;
   const list = currentInboxList();
   if (!list.length) return;
   const move = delta => { event.preventDefault(); state.ui.sel = Math.max(0, Math.min(list.length - 1, state.ui.sel + delta)); state.ui.assignFor = ''; softRender(); document.getElementById('viewRoot').querySelector('.irow.is-sel')?.scrollIntoView({ block: 'nearest' }); };

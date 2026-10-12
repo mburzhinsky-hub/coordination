@@ -48,6 +48,7 @@ function renderShell(b) {
   setBadge('badgeInbox', inbox.items.length, 'red');
   setBadge('badgeDebt', audit.remaining, 'ink');
   setBadge('tabBadgeInbox', inbox.items.length, 'red');
+  if (typeof councilRenderBadge === 'function') councilRenderBadge();
 
   const chip = document.getElementById('freshChip');
   if (chip) {

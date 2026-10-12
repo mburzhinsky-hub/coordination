@@ -58,8 +58,10 @@
 'use strict';
 
 const DB_NAME = 'coordination.daily.v2';
-const DB_VERSION = 1;
-const STORES = ['snapshots','presence','sources','settings'];
+const DB_VERSION = 2;
+const STORES = ['snapshots','presence','sources','settings','council','councilfiles'];
+/* council records carry a revision and are written only through the batch endpoint, never over a newer copy */
+const REVISIONED = new Set(['council']);
 let sharedMode = false;
 let selectedBackup = null;
 
@@ -145,6 +147,7 @@ async function importBackup() {
   setStatus('Импортирую 0 / ' + total + '…');
   try {
     for (const name of STORES) {
+      if (name === 'council' || name === 'councilfiles') { done += await importCouncilRows(name, selectedBackup.stores[name] || [], total, done); continue; }
       for (const row of selectedBackup.stores[name] || []) {
         const key = name === 'presence' ? row.snapshotId : row.id;
         if (!key) continue;
@@ -164,6 +167,32 @@ async function importBackup() {
   } catch (error) {
     setStatus('Ошибка импорта после ' + done + ' записей: ' + (error.message || error));
   }
+}
+
+async function importCouncilRows(name, rows, total, doneBefore) {
+  let moved = 0;
+  for (let i = 0; i < rows.length; i += 40) {
+    const chunk = rows.slice(i, i + 40).filter(r => r && r.id);
+    const writes = [];
+    for (const row of chunk) {
+      let current = null;
+      try {
+        const r = await fetch('/api/store/' + encodeURIComponent(name) + '/' + encodeURIComponent(row.id), { cache:'no-store', credentials:'same-origin' });
+        if (r.ok) current = await r.json();
+      } catch (_) {}
+      const currentRev = current ? Number(current.rev || 0) : 0;
+      if (current && REVISIONED.has(name) && currentRev >= Number(row.rev || 0)) continue; /* the server already has this or a newer one */
+      if (current && !REVISIONED.has(name)) continue;
+      writes.push({ store: name, key: row.id, value: row, expectedRev: currentRev });
+    }
+    if (!writes.length) continue;
+    const response = await fetch('/api/council/batch', { method:'POST', cache:'no-store', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ writes }) });
+    if (response.status === 409) throw new Error('Данные техсовета на сервере изменились во время импорта. Повторите импорт.');
+    if (!response.ok) throw new Error(await response.text());
+    moved += writes.length;
+    setStatus('Импортирую ' + (doneBefore + moved) + ' / ' + total + '…');
+  }
+  return moved;
 }
 
 async function apiGetAll(name) {

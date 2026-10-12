@@ -1,5 +1,7 @@
 'use strict';
 async function handleUpload(file) {
+  /* a registry of assignments (.xlsx) belongs to the tech council, not to the Bitrix daily export */
+  if (file && /\.xlsx$/i.test(file.name)) { if (typeof councilHandleFile === 'function') await councilHandleFile(file); return; }
   if (state.busy) return;
   state.busy = true;
   renderLoading('Разбираю новую выгрузку…');
